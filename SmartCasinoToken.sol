@@ -28,11 +28,6 @@ contract SmartCasinoToken is Context, IERC20, IERC20Metadata
         emit Transfer(address(0), msg.sender, _totalSupply);
     }
 
-    function test(uint256 a, uint256 b) public pure returns (uint256)
-    {
-        return a / b;
-    }
-
     function name() public view virtual override returns (string memory) 
     {
         return NAME;
