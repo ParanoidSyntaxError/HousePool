@@ -14,7 +14,7 @@ contract VRFHelper is VRFConsumerBaseV2
     address private constant VRF_ADDRESS = 0x6A2AAd07396B36Fe02a22b33cf443582f682c82f;
     address private constant LINK_ADDRESS = 0x84b9B910527Ad5C03A9Ca831909E21e236EA7b06;
 
-    mapping(uint256 => uint256[]) vrfResponses;
+    mapping(uint256 => uint256[]) public vrfResponses;
 
     constructor() VRFConsumerBaseV2(VRF_ADDRESS)
     {
