@@ -8,13 +8,21 @@ import "../Shared/VRFConsumerBaseV2.sol";
 
 contract VRFHelper is VRFConsumerBaseV2
 {
+    struct Roll
+    {
+        address owner;
+        uint256[][3] bets;
+        address token;
+        uint256[] responses;
+    }
+
     VRFCoordinatorV2Interface public vrfCoordinator;
     LinkTokenInterface public linkToken;
 
     address private constant VRF_ADDRESS = 0x6A2AAd07396B36Fe02a22b33cf443582f682c82f;
     address private constant LINK_ADDRESS = 0x84b9B910527Ad5C03A9Ca831909E21e236EA7b06;
 
-    mapping(uint256 => uint256[]) public vrfResponses;
+    mapping(uint256 => Roll) public rolls;
 
     constructor() VRFConsumerBaseV2(VRF_ADDRESS)
     {
@@ -24,9 +32,9 @@ contract VRFHelper is VRFConsumerBaseV2
 
     // Assumes the subscription is funded sufficiently
     // wordCount cant exceed VRFCoordinatorV2.MAX_NUM_WORDS
-    function requestRandomWords(address from, bytes32 keyHash, uint64 subscriptionId, uint16 requestConfirmations, uint32 callbackGasLimit, uint32 wordCount) internal returns (uint256)
+    function requestRandomWords(address from, uint256[][3] memory bets, address token, bytes32 keyHash, uint64 subscriptionId, uint16 requestConfirmations, uint32 callbackGasLimit) internal returns (uint256)
     {
-        require(wordCount <= 500);
+        require(bets.length <= 500);
 
         (,,,address[] memory consumers) = vrfCoordinator.getSubscription(subscriptionId);
 
@@ -34,7 +42,13 @@ contract VRFHelper is VRFConsumerBaseV2
         {
             if(from == consumers[i])
             {
-                return vrfCoordinator.requestRandomWords(keyHash, subscriptionId, requestConfirmations, callbackGasLimit, wordCount);
+                uint256 requestId = vrfCoordinator.requestRandomWords(keyHash, subscriptionId, requestConfirmations, callbackGasLimit, (uint32)(bets.length));
+
+                rolls[requestId].owner = from;
+                rolls[requestId].bets = bets;
+                rolls[requestId].token = token;
+
+                return requestId;
             }
         }
 
@@ -42,8 +56,8 @@ contract VRFHelper is VRFConsumerBaseV2
     }
 
     //VRF callback
-    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal override 
+    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal virtual override 
     {
-        vrfResponses[requestId] = randomWords;
+        rolls[requestId].responses = randomWords;
     }
 }

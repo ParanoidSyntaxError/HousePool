@@ -2,100 +2,160 @@
 
 pragma solidity ^0.8.0;
 
+import "./IHousePool.sol";
 import "./VRFHelper.sol";
 import "../Shared/IERC20.sol";
 
-//TODO: HousePool interface
+// DONE: HousePool interface
+// DONE: Get address earnings
+// DONE: Get address liquidity provided
+// DONE: Withdraw winning bets
 
-contract HousePool is VRFHelper
+// TODO: Overlapping bets
+// TODO: Check house edge math
+// TODO: House edge must be at least 1%
+// TODO: Comments
+// TODO: Docs
+
+contract HousePool is IHousePool, VRFHelper
 {
-    event AddETHLiquidity(address indexed from, uint256 amount);
-    event AddTokenLiquidity(address indexed from, address indexed token, uint256 amount);
-    event RemoveETHLiquidity(address indexed to, uint256 amount);
-    event RemoveTokenLiquidity(address indexed to, address indexed token, uint256 amount);
-
-    mapping(address => IERC20) private _erc20Tokens;
     mapping(address => mapping(address => uint256)) private _shares;
     mapping(address => uint256) private _shareTotals;
 
-    address private constant BNB_INDEX = address(0);
+    /*
+        @dev address zero used for ETH shares index
+    */
+    address private constant ETH_INDEX = address(0);
 
     constructor()
     {
 
     }
 
-    function getLiquidityBalance(address token) public view returns (uint256)
+    /*
+        @return principle is the inital amount of ETH provided
+        @return earnings are the amount of ETH earned
+    */
+    function getETHShares(address account) external view returns (uint256 principle, uint256 earnings)
     {
-        if(token == BNB_INDEX)
-        {
-            return address(this).balance;
-        }
-
-        return _erc20Tokens[token].balanceOf(address(this));
+        return (_shares[ETH_INDEX][account], (_shareTotals[ETH_INDEX] / _shares[ETH_INDEX][account]) - _shares[ETH_INDEX][account]);
     }
 
-    function createPool(address token) public returns (bool)
+    /*
+        @return principle is the inital amount of tokens provided
+        @return earnings are the amount of tokens earned
+    */
+    function getTokenShares(address account, address token) external view returns (uint256 principle, uint256 earnings) 
     {
-        _erc20Tokens[token] = IERC20(token);
+        return (_shares[token][account], (_shareTotals[token] / _shares[token][account]) - _shares[token][account]);
+    }
+
+    /*
+        @param contract address of ERC20 token
+
+        @return ERC20 token balance of this contract
+    */
+    function getTokenBalance(address token) external override view returns (uint256)
+    {
+        return _getLiquidityBalance(token);
+    }
+
+    /*
+        @return success
+    */
+    function addETHLiquidity() external override payable returns (bool)
+    {
+        _addLiquidity(msg.sender, ETH_INDEX, msg.value);
 
         return true;
     }
 
-    function addETHLiquidity() external payable returns (bool)
-    {
-        _addLiquidity(msg.sender, BNB_INDEX, msg.value);
+    /*
+        @notice contract must be approved to spend at least amount specified in parameters
 
-        return true;
-    }
+        @param contract address of ERC20 token to add
+        @param amount of ERC20 tokens to add to the liquidity
 
-    function addTokenLiquidity(address token, uint256 amount) external returns (bool)
+        @return success
+    */
+    function addTokenLiquidity(address token, uint256 amount) external override returns (bool)
     {
         _addLiquidity(msg.sender, token, amount);
 
         return true;
     }
 
-    function removeETHLiquidity(uint256 shareAmount) external returns (bool)
+    /*
+        @notice to remove your principle and earnings, enter the principle
+
+        @param number of shares to withdraw from liquidity
+
+        @return success
+    */
+    function removeETHLiquidity(uint256 shareAmount) external override returns (bool)
     {
-        _removeLiquidity(msg.sender, BNB_INDEX, shareAmount);
+        _removeLiquidity(msg.sender, ETH_INDEX, shareAmount);
 
         return true;    
     }
 
-    function removeTokenLiquidity(address token, uint256 shareAmount) external returns (bool)
+    /*
+        @notice to remove your principle and earnings, enter the principle
+
+        @param contract address of ERC20 token to remove
+        @param number of shares to withdraw from liquidity
+
+        @return success
+    */
+    function removeTokenLiquidity(address token, uint256 shareAmount) external override returns (bool)
     {
         _removeLiquidity(msg.sender, token, shareAmount);
 
         return true;
     }
 
-    function requestETHLiquidityRoll
-    (
-        uint256[][3] memory rolls, 
-        bytes32 keyHash, 
-        uint64 subscriptionId, 
-        uint16 requestConfirmations, 
-        uint32 callbackGasLimit, 
-        uint32 wordCount
-    ) external payable returns (uint256)
+    /*
+        @notice https://docs.chain.link/docs/chainlink-vrf/
+
+        @param bets
+        @param keyHash corresponds to a particular oracle job which uses that key for generating the VRF proof
+        @param subId is the ID of the VRF subscription. Must be funded with the minimum subscription balance required for the selected keyHash
+        @param confirmations is how many blocks you'd like the oracle to wait before responding to the request
+        @param gasLimit is how much gas you'd like to receive in your fulfillRandomWords callback
+
+        @return request ID, a unique identifier of the request
+    */
+    function requestETHRoll(uint256[][3] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external override payable returns (uint256)
     {
-        return _requestLiquidityRoll(msg.sender, BNB_INDEX, msg.value, rolls, keyHash, subscriptionId, requestConfirmations, callbackGasLimit, wordCount);
+        return _requestRoll(msg.sender, ETH_INDEX, msg.value, bets, keyHash, subId, confirmations, gasLimit);
     }
 
-    function requestTokenLiquidityRoll
-    (
-        address token, 
-        uint256 amount,
-        uint256[][3] memory rolls, 
-        bytes32 keyHash, 
-        uint64 subscriptionId, 
-        uint16 requestConfirmations, 
-        uint32 callbackGasLimit, 
-        uint32 wordCount
-    ) external returns (uint256)
+    /*
+        @notice https://docs.chain.link/docs/chainlink-vrf/
+
+        @param token
+        @param amount
+        @param bets
+        @param keyHash corresponds to a particular oracle job which uses that key for generating the VRF proof
+        @param subId is the ID of the VRF subscription. Must be funded with the minimum subscription balance required for the selected keyHash
+        @param confirmations is how many blocks you'd like the oracle to wait before responding to the request
+        @param gasLimit is how much gas you'd like to receive in your fulfillRandomWords callback
+
+        @return request ID, a unique identifier of the request
+    */
+    function requestTokenRoll(address token, uint256 amount, uint256[][3] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external override returns (uint256)
     {
-        return _requestLiquidityRoll(msg.sender, token, amount, rolls, keyHash, subscriptionId, requestConfirmations, callbackGasLimit, wordCount);
+        return _requestRoll(msg.sender, token, amount, bets, keyHash, subId, confirmations, gasLimit);
+    }
+
+    function _getLiquidityBalance(address token) private view returns (uint256)
+    {
+        if(token == ETH_INDEX)
+        {
+            return address(this).balance;
+        }
+
+        return IERC20(token).balanceOf(address(this));
     }
 
     function _addLiquidity(address from, address token, uint256 amount) private
@@ -103,14 +163,9 @@ contract HousePool is VRFHelper
         _shares[token][from] += amount;
         _shareTotals[token] += amount;
 
-        if(token != BNB_INDEX)
+        if(token != ETH_INDEX)
         {
-            if(_erc20Tokens[token] == IERC20(address(0)))
-            {
-                createPool(token);
-            }
-
-            _erc20Tokens[token].transferFrom(from, address(this), amount);
+            IERC20(token).transferFrom(from, address(this), amount);
 
             emit AddTokenLiquidity(from, token, amount);
         }
@@ -124,14 +179,14 @@ contract HousePool is VRFHelper
     {
         require(shareAmount <= _shares[token][from]);
 
-        uint256 contractBalance = getLiquidityBalance(token);
+        uint256 contractBalance = _getLiquidityBalance(token);
 
         uint256 amount = contractBalance / (_shareTotals[token] / shareAmount); 
 
         _shares[token][from] -= shareAmount;
         _shareTotals[token] -= shareAmount;
 
-        if(token == BNB_INDEX)
+        if(token == ETH_INDEX)
         {
             (bool os,) = payable(from).call{value: amount}("");
             require(os);
@@ -140,54 +195,70 @@ contract HousePool is VRFHelper
         }
         else
         {
-            _erc20Tokens[token].transfer(from, amount);
+            IERC20(token).transfer(from, amount);
 
             emit RemoveTokenLiquidity(from, token, amount);
         }
     }
 
     //rolls[index][bet, win, odds]
-    function _requestLiquidityRoll
-    (
-        address from, 
-        address token, 
-        uint256 amount, 
-        uint256[][3] memory rolls, 
-        bytes32 keyHash, 
-        uint64 subscriptionId, 
-        uint16 requestConfirmations, 
-        uint32 callbackGasLimit, 
-        uint32 wordCount
-    ) private returns (uint256)
+    function _requestRoll(address from, address token, uint256 amount, uint256[][3] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) private returns (uint256)
     {
-        require(rolls.length == wordCount);
+        uint256 totalBet = 0;
 
-        uint256 rollsBetAmount = 0;
+        uint256 contractBalance = _getLiquidityBalance(token);
 
-        uint256 contractBalance = getLiquidityBalance(token);
-
-        for(uint256 i = 0; i < rolls.length; i++)
+        for(uint256 i = 0; i < bets.length; i++)
         {
-            rollsBetAmount += rolls[i][0];
-
             //Check roll amount no greater than .01% of liquidity
-            require(rolls[i][0] <= contractBalance / 10000);
+            require(bets[i][0] <= contractBalance / 10000);
+
+            totalBet += bets[i][0];
 
             //TODO: Check math (careful of rounding)
             //TODO: House edge should be at least 1%
             //Check odds have > 0% house edge
-            uint256 payout = 100 / rolls[i][2];
-            uint256 expectedReturn = rolls[i][0] * payout;
-            require(rolls[i][1] < expectedReturn);   
+            uint256 expectedReturn = bets[i][0] * (100 / bets[i][1]);
+            require(bets[i][1] < expectedReturn);   
         }
 
-        require(rollsBetAmount >= amount);
+        require(totalBet >= amount);
 
-        if(token != BNB_INDEX)
+        if(token != ETH_INDEX)
         {
-            _erc20Tokens[token].transfer(from, amount);
+            IERC20(token).transfer(from, amount);
         }
 
-        return requestRandomWords(from, keyHash, subscriptionId, requestConfirmations, callbackGasLimit, wordCount);
+        return requestRandomWords(from, bets, token, keyHash, subId, confirmations, gasLimit);
+    }
+
+    function _withdrawRoll(uint256 requestId) private
+    {
+        require(rolls[requestId].owner != address(0));
+
+        address owner = rolls[requestId].owner;
+        rolls[requestId].owner = address(0);
+
+        uint256 totalPayout = 0;
+
+        for(uint256 i = 0; i < rolls[requestId].responses.length; i++)
+        {
+            uint256 rolledNumber = (rolls[requestId].responses[i] % 100) + 1;
+
+            if(rolledNumber <= rolls[requestId].bets[i][2])
+            {
+                totalPayout += rolls[requestId].bets[i][1];
+            }
+        }
+
+        if(rolls[requestId].token == ETH_INDEX)
+        {
+            (bool os,) = payable(owner).call{value: totalPayout}("");
+            require(os);
+        }
+        else
+        {
+            IERC20(rolls[requestId].token).transfer(owner, totalPayout);
+        }
     }
 }
