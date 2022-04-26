@@ -10,10 +10,11 @@ import "../Shared/IERC20.sol";
 // DONE: Get address earnings
 // DONE: Get address liquidity provided
 // DONE: Withdraw winning bets
+// DONE: House edge must be at least 1%
+// DONE: Overlapping bets
 
-// TODO: Overlapping bets
-// TODO: Check house edge math
-// TODO: House edge must be at least 1%
+// TODO: Allow two decimal places in house math
+// TODO: Audit house math
 // TODO: Comments
 // TODO: Docs
 
@@ -26,6 +27,8 @@ contract HousePool is IHousePool, VRFHelper
         @dev address zero used for ETH shares index
     */
     address private constant ETH_INDEX = address(0);
+
+    mapping(address => uint256) private _unclaimedPayouts;
 
     constructor()
     {
@@ -125,7 +128,7 @@ contract HousePool is IHousePool, VRFHelper
 
         @return request ID, a unique identifier of the request
     */
-    function requestETHRoll(uint256[][3] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external override payable returns (uint256)
+    function requestETHRoll(uint256[][][3] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external override payable returns (uint256)
     {
         return _requestRoll(msg.sender, ETH_INDEX, msg.value, bets, keyHash, subId, confirmations, gasLimit);
     }
@@ -143,9 +146,9 @@ contract HousePool is IHousePool, VRFHelper
 
         @return request ID, a unique identifier of the request
     */
-    function requestTokenRoll(address token, uint256 amount, uint256[][3] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external override returns (uint256)
+    function requestTokenRoll(address token, uint256[][][3] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external override returns (uint256)
     {
-        return _requestRoll(msg.sender, token, amount, bets, keyHash, subId, confirmations, gasLimit);
+        return _requestRoll(msg.sender, token, 0, bets, keyHash, subId, confirmations, gasLimit);
     }
 
     function _getLiquidityBalance(address token) private view returns (uint256)
@@ -202,7 +205,7 @@ contract HousePool is IHousePool, VRFHelper
     }
 
     //rolls[index][bet, win, odds]
-    function _requestRoll(address from, address token, uint256 amount, uint256[][3] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) private returns (uint256)
+    function _requestRoll(address from, address token, uint256 amount, uint256[][][3] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) private returns (uint256)
     {
         uint256 totalBet = 0;
 
@@ -210,23 +213,25 @@ contract HousePool is IHousePool, VRFHelper
 
         for(uint256 i = 0; i < bets.length; i++)
         {
-            //Check roll amount no greater than .01% of liquidity
-            require(bets[i][0] <= contractBalance / 10000);
+            for(uint256 a = 0; a < bets[i].length; a++)
+            {
+                // Check roll amount no greater than .01% of liquidity
+                require(bets[i][a][0] <= contractBalance / 10000);
 
-            totalBet += bets[i][0];
+                totalBet += bets[i][a][0];
 
-            //TODO: Check math (careful of rounding)
-            //TODO: House edge should be at least 1%
-            //Check odds have > 0% house edge
-            uint256 expectedReturn = bets[i][0] * (100 / bets[i][1]);
-            require(bets[i][1] < expectedReturn);   
+                uint256 expectedReturn = bets[i][a][0] * (100 / bets[i][a][2]);
+                require(bets[i][a][1] <= expectedReturn + (bets[i][a][1] / 100));   
+            }
         }
-
-        require(totalBet >= amount);
 
         if(token != ETH_INDEX)
         {
-            IERC20(token).transfer(from, amount);
+            IERC20(token).transfer(from, totalBet);
+        }
+        else
+        {
+            require(amount >= totalBet);
         }
 
         return requestRandomWords(from, bets, token, keyHash, subId, confirmations, gasLimit);
@@ -245,9 +250,12 @@ contract HousePool is IHousePool, VRFHelper
         {
             uint256 rolledNumber = (rolls[requestId].responses[i] % 100) + 1;
 
-            if(rolledNumber <= rolls[requestId].bets[i][2])
+            for(uint256 a = 0; a < rolls[requestId].bets[i].length; a++)
             {
-                totalPayout += rolls[requestId].bets[i][1];
+                if(rolledNumber <= rolls[requestId].bets[i][a][2])
+                {
+                    totalPayout += rolls[requestId].bets[i][a][1];
+                }
             }
         }
 

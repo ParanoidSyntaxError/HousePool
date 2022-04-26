@@ -11,7 +11,7 @@ contract VRFHelper is VRFConsumerBaseV2
     struct Roll
     {
         address owner;
-        uint256[][3] bets;
+        uint256[][][3] bets;
         address token;
         uint256[] responses;
     }
@@ -32,7 +32,7 @@ contract VRFHelper is VRFConsumerBaseV2
 
     // Assumes the subscription is funded sufficiently
     // wordCount cant exceed VRFCoordinatorV2.MAX_NUM_WORDS
-    function requestRandomWords(address from, uint256[][3] memory bets, address token, bytes32 keyHash, uint64 subscriptionId, uint16 requestConfirmations, uint32 callbackGasLimit) internal returns (uint256)
+    function requestRandomWords(address from, uint256[][][3] memory bets, address token, bytes32 keyHash, uint64 subscriptionId, uint16 requestConfirmations, uint32 callbackGasLimit) internal returns (uint256)
     {
         require(bets.length <= 500);
 

@@ -22,7 +22,7 @@ interface IHousePool
 
     function removeTokenLiquidity(address token, uint256 shareAmount) external returns (bool);
 
-    function requestETHRoll(uint256[][3] memory rolls, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external payable returns (uint256);
+    function requestETHRoll(uint256[][][3] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external payable returns (uint256);
 
-    function requestTokenRoll(address token, uint256 amount, uint256[][3] memory rolls, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external returns (uint256);
+    function requestTokenRoll(address token, uint256[][][3] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external returns (uint256);
 }
