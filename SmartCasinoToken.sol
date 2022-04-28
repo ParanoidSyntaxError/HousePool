@@ -16,7 +16,7 @@ contract SmartCasinoToken is Context, IERC20, IERC20Metadata
     uint256 private _totalBurn;
 
     string private constant NAME = "Smart Casino Token";
-    string private constant SYMBOL = "SCAS";
+    string private constant SYMBOL = "SMCS";
     uint8 private constant DECIMALS = 18;
 
     constructor() 
