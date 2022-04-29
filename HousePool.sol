@@ -56,7 +56,7 @@ contract HousePool is IHousePool, VRFHelper
     */
     function getETHShares(address account) external view returns (uint256, uint256)
     {
-        return (_shares[ETH_INDEX][account], _getLiquidityBalance(ETH_INDEX) / (_shareTotals[ETH_INDEX] / _shares[ETH_INDEX][account]));
+        return (_shares[ETH_INDEX][account], address(this).balance / (_shareTotals[ETH_INDEX] / _shares[ETH_INDEX][account]));
     }
 
     /*
@@ -192,7 +192,6 @@ contract HousePool is IHousePool, VRFHelper
         return _requestRoll(msg.sender, token, 0, bets, keyHash, subId, confirmations, gasLimit);
     }
 
-
     /*
         @notice transfers winning bets to the roll owner address
 
@@ -203,6 +202,13 @@ contract HousePool is IHousePool, VRFHelper
         _withdrawRoll(requestID);
     }
 
+    /*
+        @param VRF request ID
+        @param response index
+        @param overlap index
+
+        @return did bet win
+    */
     function _isWinningBet(uint256 requestId, uint256 responseIndex, uint256 overlapIndex) private view returns (bool)
     {
         uint256 rolledNumber = (vrfResponses[requestId][responseIndex] % vrfBets[requestId][responseIndex][overlapIndex][4]) + 1;
@@ -215,6 +221,13 @@ contract HousePool is IHousePool, VRFHelper
         return false;
     }
 
+    /*
+        @dev use ETH_INDEX in parameter to return ETH balance
+
+        @param token contract
+
+        @return amount of tokens or ETH in this contract
+    */
     function _getLiquidityBalance(address token) private view returns (uint256)
     {
         if(token == ETH_INDEX)
@@ -225,6 +238,11 @@ contract HousePool is IHousePool, VRFHelper
         return IERC20(token).balanceOf(address(this));
     }
 
+    /*
+        @param address adding liquidity
+        @param token contract being added
+        @param amount of tokens added
+    */
     function _addLiquidity(address from, address token, uint256 amount) private
     {
         require(amount > 0);
@@ -244,6 +262,11 @@ contract HousePool is IHousePool, VRFHelper
         _shareTotals[token] += amount;
     }
 
+    /*
+        @param address removing liquidity
+        @param contract of token being removed
+        @param amount of shares being removed
+    */
     function _removeLiquidity(address from, address token, uint256 shareAmount) private
     {
         require(shareAmount <= _shares[token][from]);
@@ -272,11 +295,22 @@ contract HousePool is IHousePool, VRFHelper
         }
     }
 
+    /*
+        @param requestor address
+        @param bet token address
+        @param expected amount of ETH to bet
+        @param bets [VRF response][Overlap bet][Bet, Win, Min, Max, Range]
+        @param keyHash corresponds to a particular oracle job which uses that key for generating the VRF proof
+        @param subId is the ID of the VRF subscription. Must be funded with the minimum subscription balance required for the selected keyHash
+        @param confirmations is how many blocks you'd like the oracle to wait before responding to the request
+        @param gasLimit is how much gas you'd like to receive in your fulfillRandomWords callback
+
+        @return VRF request ID
+    */
     function _requestRoll(address from, address token, uint256 amount, uint256[5][][] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) private returns (uint256)
     {
         uint256 totalBet = 0;
 
-        // rolls[index][bet, win, min, max, range]
         for(uint256 i = 0; i < bets.length; i++)
         {
             for(uint256 a = 0; a < bets[i].length; a++)
@@ -322,7 +356,6 @@ contract HousePool is IHousePool, VRFHelper
         uint256 totalBet = 0;
         uint256 totalPayout = 0;
 
-        // rolls[index][bet, win, min, max, range]
         for(uint256 i = 0; i < vrfBets[requestId].length; i++)
         {
             for(uint256 a = 0; a < vrfBets[requestId][i].length; a++)

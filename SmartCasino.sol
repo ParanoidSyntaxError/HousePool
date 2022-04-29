@@ -36,7 +36,7 @@ contract SmartCasino is Ownable
 
     IHousePool public immutable housePool;
 
-    address private constant HOUSE_POOL_ADDRESS = 0xbFAc8176f4a1c47616Dc86D7949561298f8Ece87; //DEBUG
+    address private HOUSE_POOL_ADDRESS;
 
     GameData private _coinFlip;
 
@@ -52,8 +52,10 @@ contract SmartCasino is Ownable
         housePool = IHousePool(HOUSE_POOL_ADDRESS);
     }
 
-    function setVrfSettings(bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external onlyOwner returns(bool)
+    function setVrfSettings(address housePoolContract, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external onlyOwner returns(bool)
     {
+        HOUSE_POOL_ADDRESS = housePoolContract; // DEBUG
+
         _keyHash = keyHash;
         _subscriptionId = subId;
         _requestConfirmations = confirmations;
