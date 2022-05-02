@@ -13,49 +13,51 @@ import "../Shared/IERC20.sol";
 
 contract SmartCasino is Ownable
 {
-    struct Bet
+    struct CoinFlipBet
     {
-        address owner;
-        uint256 amount;
+        uint256[2] amounts;
+        uint256 timestamp;
     }
 
-    struct RollID
+    struct CoinFlipData
     {
-        uint256 requestId;
-        uint256[2][] indexes;
+        uint256 lastTimestamp;
+
+        //[0] = heads
+        //[1] = tails
+        uint256[2] currentBetTotals;
+
+        //[token][timestamp] = requestId
+        mapping(address => mapping(uint256 => uint256)) requestIds;
+
+        //[token][player][index] = bet
+        mapping(address => mapping(address => mapping(uint256 => CoinFlipBet))) bets;
+        //[token][player] = length
+        mapping(address => mapping(address => uint256)) betLengths;
     }
 
-    struct GameData
-    {
-        mapping(address => mapping(uint256 => RollID)) rollIds;
-        mapping(address => uint256) rollIdLengths;
+    IHousePool public housePool;
 
-        mapping(address => mapping(uint256 => Bet)) bets;
-        mapping(address => uint256) betLengths;
-    }
+    CoinFlipData private _coinFlip;
 
-    IHousePool public immutable housePool;
+    mapping(address => mapping(address => uint256)) public _tokenBalances;
 
-    address private HOUSE_POOL_ADDRESS;
-
-    GameData private _coinFlip;
-
-    mapping(address => mapping(address => uint256)) private _tokenBalances;
-
-    bytes32 private _keyHash = 0xd4bb89654db74673a187bd804519e65e3f71a52bc55f11da7601a13dcf505314;
-    uint32 private _callbackGasLimit = 100000;
-    uint16 private _requestConfirmations = 3;
+    bytes32 private _keyHash;
+    uint32 private _callbackGasLimit;
+    uint16 private _requestConfirmations;
     uint64 private _subscriptionId;
 
     constructor()
     {
-        housePool = IHousePool(HOUSE_POOL_ADDRESS);
+        housePool = IHousePool(0xb4128706d9Bf5088208C07b12Ef7d86d1c636Bd4);
+
+        setVrfSettings(0xd4bb89654db74673a187bd804519e65e3f71a52bc55f11da7601a13dcf505314, 688, 3, 100000);
     }
 
-    function setVrfSettings(address housePoolContract, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external onlyOwner returns(bool)
-    {
-        HOUSE_POOL_ADDRESS = housePoolContract; // DEBUG
+    receive() external payable {}
 
+    function setVrfSettings(bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) public returns(bool)
+    {
         _keyHash = keyHash;
         _subscriptionId = subId;
         _requestConfirmations = confirmations;
@@ -67,44 +69,6 @@ contract SmartCasino is Ownable
     function getVrfSettings() external view returns(bytes32, uint64, uint16, uint32)
     {
         return (_keyHash, _subscriptionId, _requestConfirmations, _callbackGasLimit);
-    }
-
-    function flipCoinBet(address token, uint256 amount) public returns(bool)
-    {
-        require(amount <= _tokenBalances[token][msg.sender]);
-
-        if(_coinFlip.rollIds[msg.sender][_coinFlip.rollIdLengths[msg.sender]].requestId != 0)
-        {
-            _coinFlip.rollIdLengths[msg.sender] += 1;
-        }
-
-        _coinFlip.rollIds[msg.sender][_coinFlip.rollIdLengths[msg.sender]].indexes.push([0, _coinFlip.betLengths[token]]);
-
-        _coinFlip.bets[token][_coinFlip.betLengths[token]] = Bet(msg.sender, amount);
-
-        _coinFlip.betLengths[token] += 1;
-
-        return true;
-    }
-
-    function flipCoinRoll(address token) public 
-    {
-        uint256[5][][] memory bets = new uint256[5][][](_coinFlip.betLengths[token]);
-
-        for(uint256 i = 0; i < bets.length; i++)
-        {
-            bets[i] = new uint256[5][](1);
-            bets[i][0] = [_coinFlip.bets[token][i].amount, _coinFlip.bets[token][i].amount, 1, 99, 200];
-        }
-
-        uint256 requestId = housePool.requestTokenRoll(token, bets, _keyHash, _subscriptionId, _requestConfirmations, _callbackGasLimit);
-
-        for(uint256 i = 0; i < bets.length; i++)
-        {
-            _coinFlip.rollIds[_coinFlip.bets[token][i].owner][_coinFlip.rollIdLengths[_coinFlip.bets[token][i].owner]].requestId = requestId;
-        }
-
-        _coinFlip.betLengths[token] = 0;
     }
 
     function depositETH() public payable returns(bool)
@@ -123,23 +87,106 @@ contract SmartCasino is Ownable
         return true;
     }
 
-    function claimCoinFlipWinnings() public returns (bool)
+    function betCoinFlip(address token, uint256[2] memory amounts) public
     {
-        for(uint256 i = 0; i < _coinFlip.rollIdLengths[msg.sender]; i++)
-        {
-            (, address token,, uint256[5][][] memory bets) = housePool.getRoll(_coinFlip.rollIds[msg.sender][i].requestId);
+        //Does account have enough to bet
+        require(amounts[0] + amounts[1] <= _tokenBalances[token][msg.sender]);
 
-            for(uint256 a = 0; a < _coinFlip.rollIds[msg.sender][i].indexes.length; a++)
-            {
-                if(housePool.isWinningBet(_coinFlip.rollIds[msg.sender][i].requestId, _coinFlip.rollIds[msg.sender][i].indexes[a][0], _coinFlip.rollIds[msg.sender][i].indexes[a][1]))
-                {                 
-                    _tokenBalances[token][msg.sender] += bets[_coinFlip.rollIds[msg.sender][i].indexes[a][0]][_coinFlip.rollIds[msg.sender][i].indexes[a][1]][1];
-                }
-            }
+        //Remove amount from account balance
+        _tokenBalances[token][msg.sender] -= amounts[0] + amounts[1];
+
+        if(_coinFlip.bets[token][msg.sender][_coinFlip.betLengths[token][msg.sender] - 1].timestamp == _coinFlip.lastTimestamp)
+        {
+            //Add to bet
+            _coinFlip.bets[token][msg.sender][_coinFlip.betLengths[token][msg.sender] - 1].amounts[0] += amounts[0];
+            _coinFlip.bets[token][msg.sender][_coinFlip.betLengths[token][msg.sender] - 1].amounts[1] += amounts[1];
+        }
+        else
+        {
+            //New bet
+            _coinFlip.bets[token][msg.sender][_coinFlip.betLengths[token][msg.sender]] = CoinFlipBet(amounts, _coinFlip.lastTimestamp);
+
+            _coinFlip.betLengths[token][msg.sender] += 1;
         }
 
-        _coinFlip.rollIdLengths[msg.sender] = 0;
+        _coinFlip.currentBetTotals[0] += amounts[0];
+        _coinFlip.currentBetTotals[1] += amounts[1];
+    }
 
-        return true;
+    function claimCoinFlip(address token, address account) public
+    {
+        for(uint256 i = 0; i < _coinFlip.betLengths[token][account]; i++)
+        {
+            //if()
+        }
+
+        _coinFlip.betLengths[token][account] = 0;
+
+        /*
+        struct CoinFlipData
+        {
+            uint256 lastTimestamp;
+
+            //[0] = heads
+            //[1] = tails
+            uint256[2] currentBetTotals;
+
+            //[token][timestamp] = requestId
+            mapping(address => mapping(uint256 => uint256)) requestIds;
+
+            //[token][player][index] = bet
+            mapping(address => mapping(address => mapping(uint256 => CoinFlipBet))) bets;
+            //[token][player] = length
+            mapping(address => mapping(address => uint256)) betLengths;
+        }
+        */
+    }
+
+    function rollCoinFlip(address token) public
+    {
+        //Prevent overwriting timestamp to requestID mapping
+        require(_coinFlip.lastTimestamp != block.timestamp);
+
+        //Build bets array for house pool
+        uint256[5][][] memory bets = new uint256[5][][](1);
+        bets[0] = new uint256[5][](2);
+
+        //Heads
+        bets[0][0] = [_coinFlip.currentBetTotals[0], _coinFlip.currentBetTotals[0], 1, 99, 200];
+        //Tails
+        bets[0][1] = [_coinFlip.currentBetTotals[1], _coinFlip.currentBetTotals[1], 101, 200, 200];
+
+        //Total tokens bet, amount to be sent to house pool
+        uint256 totalBet = _coinFlip.currentBetTotals[0] + _coinFlip.currentBetTotals[0];
+
+        //Temp request ID
+        uint256 requestId = 0;
+
+        if(token == housePool.getETHIndex())
+        {
+            //ETH house pool roll request
+            requestId = housePool.requestETHRoll{value : totalBet}(bets, _keyHash, _subscriptionId, _requestConfirmations, _callbackGasLimit);
+        }
+        else
+        {
+            //Approve tokens for transfer by house pool
+            IERC20(token).approve((address)(housePool), totalBet);
+
+            //ERC20 token house pool roll request
+            requestId = housePool.requestTokenRoll(token, bets, _keyHash, _subscriptionId, _requestConfirmations, _callbackGasLimit);
+        }
+
+        //Assign request ID to timestamp
+        _coinFlip.requestIds[token][_coinFlip.lastTimestamp] = requestId;
+
+        //Get coin flip ready for the next round
+        _restartCoinFlip();
+    }
+
+    function _restartCoinFlip() private
+    {
+        _coinFlip.currentBetTotals[0] = 0;
+        _coinFlip.currentBetTotals[1] = 0;
+        _coinFlip.lastTimestamp = block.timestamp;
     }
 }

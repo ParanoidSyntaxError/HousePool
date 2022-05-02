@@ -26,14 +26,13 @@ contract HousePool is IHousePool, VRFHelper
     /*
         @dev address zero used for ETH indexes
     */
-    address private constant ETH_INDEX = address(0);
-
-    mapping(address => uint256) public _pendingBetTotals;
 
     constructor()
     {
 
     }
+
+    receive() external payable {}
 
     /*  
         @param VRF request ID
@@ -41,7 +40,7 @@ contract HousePool is IHousePool, VRFHelper
         @return requestor address
         @return bet token
         @return VRF responses
-        @return bets [VRF response][Overlap bet][Bet, Win, Min, Max, Range]
+        @return bets [VRF response][Overlap bet][Wager, PayoutOdds, Lower, Upper, Range]
     */
     function getRoll(uint256 requestId) external view override returns(address, address, uint256[] memory, uint256[5][][] memory)
     {
@@ -56,7 +55,7 @@ contract HousePool is IHousePool, VRFHelper
     */
     function getETHShares(address account) external view returns (uint256, uint256)
     {
-        return (_shares[ETH_INDEX][account], address(this).balance / (_shareTotals[ETH_INDEX] / _shares[ETH_INDEX][account]));
+        return (_shares[address(0)][account], address(this).balance / (_shareTotals[address(0)] / _shares[address(0)][account]));
     }
 
     /*
@@ -78,7 +77,7 @@ contract HousePool is IHousePool, VRFHelper
     */
     function getETHIndex() external pure override returns (address)
     {
-        return ETH_INDEX;
+        return address(0);
     }
 
     /*
@@ -108,7 +107,7 @@ contract HousePool is IHousePool, VRFHelper
     */
     function addETHLiquidity() external override payable returns (bool)
     {
-        _addLiquidity(msg.sender, ETH_INDEX, msg.value);
+        _addLiquidity(msg.sender, address(0), msg.value);
 
         return true;
     }
@@ -123,7 +122,7 @@ contract HousePool is IHousePool, VRFHelper
     */
     function addTokenLiquidity(address token, uint256 amount) external override returns (bool)
     {
-        require(token != ETH_INDEX);
+        require(token != address(0));
 
         _addLiquidity(msg.sender, token, amount);
 
@@ -139,7 +138,7 @@ contract HousePool is IHousePool, VRFHelper
     */
     function removeETHLiquidity(uint256 shareAmount) external override returns (bool)
     {
-        _removeLiquidity(msg.sender, ETH_INDEX, shareAmount);
+        _removeLiquidity(msg.sender, address(0), shareAmount);
 
         return true;    
     }
@@ -162,7 +161,7 @@ contract HousePool is IHousePool, VRFHelper
     /*
         @notice https://docs.chain.link/docs/chainlink-vrf/
 
-        @param bets
+        @param bets [VRF response][Overlap bet][Wager, PayoutOdds, Lower, Upper, Range]
         @param keyHash corresponds to a particular oracle job which uses that key for generating the VRF proof
         @param subId is the ID of the VRF subscription. Must be funded with the minimum subscription balance required for the selected keyHash
         @param confirmations is how many blocks you'd like the oracle to wait before responding to the request
@@ -172,14 +171,16 @@ contract HousePool is IHousePool, VRFHelper
     */
     function requestETHRoll(uint256[5][][] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external override payable returns (uint256)
     {
-        return _requestRoll(msg.sender, ETH_INDEX, msg.value, bets, keyHash, subId, confirmations, gasLimit);
+        return _requestRoll(msg.sender, address(0), msg.value, bets, keyHash, subId, confirmations, gasLimit);
     }
 
     /*
+        @notice contract must be approved to spend at least amount specified in parameters
+        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00f or 35x, and 50 would be the equivalent of 0.50f or 0.5x
         @notice https://docs.chain.link/docs/chainlink-vrf/
 
-        @param token to bet
-        @param bets [VRF response][Overlap bet][Bet, Win, Min, Max, Range] 
+        @param contract address of token wagered
+        @param bets [VRF response][Overlap bet][Wager, PayoutOdds, Lower, Upper, Range]
         @param keyHash corresponds to a particular oracle job which uses that key for generating the VRF proof
         @param subId is the ID of the VRF subscription. Must be funded with the minimum subscription balance required for the selected keyHash
         @param confirmations is how many blocks you'd like the oracle to wait before responding to the request
@@ -230,7 +231,7 @@ contract HousePool is IHousePool, VRFHelper
     */
     function _getLiquidityBalance(address token) private view returns (uint256)
     {
-        if(token == ETH_INDEX)
+        if(token == address(0))
         {
             return address(this).balance;
         }
@@ -247,7 +248,7 @@ contract HousePool is IHousePool, VRFHelper
     {
         require(amount > 0);
 
-        if(token != ETH_INDEX)
+        if(token != address(0))
         {
             IERC20(token).transferFrom(from, address(this), amount);
 
@@ -275,12 +276,12 @@ contract HousePool is IHousePool, VRFHelper
 
         uint256 amount = contractBalance / (_shareTotals[token] / shareAmount); 
 
-        require(contractBalance > amount + _pendingBetTotals[token]);
+        require(contractBalance > amount);
 
         _shares[token][from] -= shareAmount;
         _shareTotals[token] -= shareAmount;
 
-        if(token == ETH_INDEX)
+        if(token == address(0))
         {
             (bool os,) = payable(from).call{value: amount}("");
             require(os);
@@ -299,7 +300,7 @@ contract HousePool is IHousePool, VRFHelper
         @param requestor address
         @param bet token address
         @param expected amount of ETH to bet
-        @param bets [VRF response][Overlap bet][Bet, Win, Min, Max, Range]
+        @param bets [VRF response][Overlap bet][Wager, PayoutOdds, Lower, Upper, Range]
         @param keyHash corresponds to a particular oracle job which uses that key for generating the VRF proof
         @param subId is the ID of the VRF subscription. Must be funded with the minimum subscription balance required for the selected keyHash
         @param confirmations is how many blocks you'd like the oracle to wait before responding to the request
@@ -315,12 +316,16 @@ contract HousePool is IHousePool, VRFHelper
         {
             for(uint256 a = 0; a < bets[i].length; a++)
             {
-                uint256 winChance = (bets[i][a][3] - bets[i][a][2]) + 1;
-                uint256 loseChance = bets[i][a][4] - winChance;
-                uint256 houseEdge = (((loseChance * bets[i][a][0]) - (winChance * bets[i][a][1])) * 10) / bets[i][a][4];
+                //Upper bound must be greater than lower bound
+                require(bets[i][a][3] >= bets[i][a][2]);
+
+                uint256 winRange = (bets[i][a][3] - bets[i][a][2]) + 1;
+                uint256 loseOdds = ((bets[i][a][4] - winRange) * 100) / winRange;
+
+                uint256 houseEdge = (loseOdds - bets[i][a][1]) * ((winRange * 1000) / bets[i][a][4]);
 
                 // House edge must be greater than 1%
-                require(houseEdge >= 1);
+                require(houseEdge >= 1000);
 
                 totalBet += bets[i][a][0];
             }
@@ -329,11 +334,9 @@ contract HousePool is IHousePool, VRFHelper
         // Check roll amount no greater than .01% of liquidity
         require(totalBet <= _getLiquidityBalance(token) / 10000);
 
-        _pendingBetTotals[token] += totalBet;
-
-        if(token != ETH_INDEX)
+        if(token != address(0))
         {
-            IERC20(token).transfer(from, totalBet);
+            IERC20(token).transferFrom(from, address(this), amount);
         }
         else
         {
@@ -346,14 +349,11 @@ contract HousePool is IHousePool, VRFHelper
     /*
         @param VRF request ID
     */
-    function _withdrawRoll(uint256 requestId) private
+    function _withdrawRoll(uint256 requestId) public
     {
-        require(vrfRequestors[requestId] != address(0));
+        require(vrfWithdrawn[requestId] == false);
+        vrfWithdrawn[requestId] = true;
 
-        address owner = vrfRequestors[requestId];
-        vrfRequestors[requestId] = address(0);
-
-        uint256 totalBet = 0;
         uint256 totalPayout = 0;
 
         for(uint256 i = 0; i < vrfBets[requestId].length; i++)
@@ -362,27 +362,23 @@ contract HousePool is IHousePool, VRFHelper
             {
                 if(_isWinningBet(requestId, i, a))
                 {
-                    totalPayout += vrfBets[requestId][i][a][1];
+                    totalPayout += vrfBets[requestId][i][a][0] + ((vrfBets[requestId][i][a][0] * vrfBets[requestId][i][a][1]) / 100);
                 }
-
-                totalBet += vrfBets[requestId][i][a][0];
             }
         }
 
-        _pendingBetTotals[vrfTokens[requestId]] -= totalBet;
-
-        if(vrfTokens[requestId] == ETH_INDEX)
+        if(vrfTokens[requestId] == address(0))
         {
-            (bool os,) = payable(owner).call{value: totalPayout}("");
-            require(os);
+            (bool success,) = vrfRequestors[requestId].call{value: totalPayout}("");
+            require(success);
 
-            emit WithdrawETH(owner, totalPayout);
+            emit WithdrawETH(vrfRequestors[requestId], totalPayout);
         }
         else
         {
-            IERC20(vrfTokens[requestId]).transfer(owner, totalPayout);
+            IERC20(vrfTokens[requestId]).transfer(vrfRequestors[requestId], totalPayout);
 
-            emit WithdrawToken(owner, vrfTokens[requestId], totalPayout);
+            emit WithdrawToken(vrfRequestors[requestId], vrfTokens[requestId], totalPayout);
         }
     }
 }
