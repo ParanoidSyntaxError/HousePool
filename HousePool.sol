@@ -12,20 +12,23 @@ import "../Shared/IERC20.sol";
 // DONE: Withdraw winning bets
 // DONE: House edge must be at least 1%
 // DONE: Overlapping bets
-// DONE: Prevent withdraw of unclaimed payments
+// DONE: Comments
 
 // TODO: Audit house math
-// TODO: Comments
 // TODO: Docs
 
 contract HousePool is IHousePool, VRFHelper
 {
-    mapping(address => mapping(address => uint256)) public _shares;
-    mapping(address => uint256) public _shareTotals;
+    /*
+        @dev shares are proportional to the amount of the liquidity pool an account is entitled to withdraw
+    */
+    mapping(address => mapping(address => uint256)) private _shares;
+    mapping(address => uint256) private _shareTotals;
 
     /*
-        @dev address zero used for ETH indexes
+        @dev address zero used for ETH mapping indexes
     */
+    address private constant ETH_INDEX = address(0);
 
     constructor()
     {
@@ -55,7 +58,7 @@ contract HousePool is IHousePool, VRFHelper
     */
     function getETHShares(address account) external view returns (uint256, uint256)
     {
-        return (_shares[address(0)][account], address(this).balance / (_shareTotals[address(0)] / _shares[address(0)][account]));
+        return (_shares[ETH_INDEX][account], address(this).balance / (_shareTotals[ETH_INDEX] / _shares[ETH_INDEX][account]));
     }
 
     /*
@@ -77,7 +80,7 @@ contract HousePool is IHousePool, VRFHelper
     */
     function getETHIndex() external pure override returns (address)
     {
-        return address(0);
+        return ETH_INDEX;
     }
 
     /*
@@ -107,7 +110,7 @@ contract HousePool is IHousePool, VRFHelper
     */
     function addETHLiquidity() external override payable returns (bool)
     {
-        _addLiquidity(msg.sender, address(0), msg.value);
+        _addLiquidity(msg.sender, ETH_INDEX, msg.value);
 
         return true;
     }
@@ -122,7 +125,8 @@ contract HousePool is IHousePool, VRFHelper
     */
     function addTokenLiquidity(address token, uint256 amount) external override returns (bool)
     {
-        require(token != address(0));
+        // Use addETHLiquidity() instead
+        require(token != ETH_INDEX);
 
         _addLiquidity(msg.sender, token, amount);
 
@@ -138,7 +142,7 @@ contract HousePool is IHousePool, VRFHelper
     */
     function removeETHLiquidity(uint256 shareAmount) external override returns (bool)
     {
-        _removeLiquidity(msg.sender, address(0), shareAmount);
+        _removeLiquidity(msg.sender, ETH_INDEX, shareAmount);
 
         return true;    
     }
@@ -159,7 +163,9 @@ contract HousePool is IHousePool, VRFHelper
     }
 
     /*
-        @notice https://docs.chain.link/docs/chainlink-vrf/
+        @notice msg.value must be at least total wagered in parameters
+        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00f or 35x, and 50 would be the equivalent of 0.50f or 0.5x  
+        @notice use the Chainlink VRF docs when deciding VRF request parameters: https://docs.chain.link/docs/chainlink-vrf/
 
         @param bets [VRF response][Overlap bet][Wager, PayoutOdds, Lower, Upper, Range]
         @param keyHash corresponds to a particular oracle job which uses that key for generating the VRF proof
@@ -171,13 +177,13 @@ contract HousePool is IHousePool, VRFHelper
     */
     function requestETHRoll(uint256[5][][] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external override payable returns (uint256)
     {
-        return _requestRoll(msg.sender, address(0), msg.value, bets, keyHash, subId, confirmations, gasLimit);
+        return _requestRoll(msg.sender, ETH_INDEX, msg.value, bets, keyHash, subId, confirmations, gasLimit);
     }
 
     /*
-        @notice contract must be approved to spend at least amount specified in parameters
-        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00f or 35x, and 50 would be the equivalent of 0.50f or 0.5x
-        @notice https://docs.chain.link/docs/chainlink-vrf/
+        @notice contract must be approved to spend at least amount wagered in parameters
+        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00f or 35x, and 50 would be the equivalent of 0.50f or 0.5x  
+        @notice use the Chainlink VRF docs when deciding VRF request parameters: https://docs.chain.link/docs/chainlink-vrf/
 
         @param contract address of token wagered
         @param bets [VRF response][Overlap bet][Wager, PayoutOdds, Lower, Upper, Range]
@@ -194,7 +200,7 @@ contract HousePool is IHousePool, VRFHelper
     }
 
     /*
-        @notice transfers winning bets to the roll owner address
+        @notice transfers winning bets to the roll requestor address
 
         @param VRF request ID
     */
@@ -212,13 +218,17 @@ contract HousePool is IHousePool, VRFHelper
     */
     function _isWinningBet(uint256 requestId, uint256 responseIndex, uint256 overlapIndex) private view returns (bool)
     {
+        // Get random number from VRF response
         uint256 rolledNumber = (vrfResponses[requestId][responseIndex] % vrfBets[requestId][responseIndex][overlapIndex][4]) + 1;
 
+        // Check the random number is within the bets lower to upper range
         if(rolledNumber >= vrfBets[requestId][responseIndex][overlapIndex][2] && rolledNumber <= vrfBets[requestId][responseIndex][overlapIndex][3])
         {
+            // Winner!
             return true;
         }
 
+        // Loser :(
         return false;
     }
 
@@ -231,11 +241,13 @@ contract HousePool is IHousePool, VRFHelper
     */
     function _getLiquidityBalance(address token) private view returns (uint256)
     {
-        if(token == address(0))
+        if(token == ETH_INDEX)
         {
+            // Return contract ETH balance
             return address(this).balance;
         }
 
+        // Return contracts ERC20 token balance
         return IERC20(token).balanceOf(address(this));
     }
 
@@ -248,8 +260,9 @@ contract HousePool is IHousePool, VRFHelper
     {
         require(amount > 0);
 
-        if(token != address(0))
+        if(token != ETH_INDEX)
         {
+            // Transfer tokens from account to liquidity pool
             IERC20(token).transferFrom(from, address(this), amount);
 
             emit AddTokenLiquidity(from, token, amount);
@@ -259,7 +272,9 @@ contract HousePool is IHousePool, VRFHelper
             emit AddETHLiquidity(from, amount);
         }
     
+        // Add shares to account
         _shares[token][from] += amount;
+        // Add shares to share supply
         _shareTotals[token] += amount;
     }
 
@@ -270,19 +285,26 @@ contract HousePool is IHousePool, VRFHelper
     */
     function _removeLiquidity(address from, address token, uint256 shareAmount) private
     {
+        // Check account has enough shares to withdraw
         require(shareAmount <= _shares[token][from]);
 
+        // Get contract balance of specified token
         uint256 contractBalance = _getLiquidityBalance(token);
 
+        // Amount of tokens being withdrawn
         uint256 amount = contractBalance / (_shareTotals[token] / shareAmount); 
 
+        // Ensure contract has enough tokens to withdraw
         require(contractBalance > amount);
 
+        // Remove shares from account
         _shares[token][from] -= shareAmount;
+        // Remove shares from share supply
         _shareTotals[token] -= shareAmount;
 
-        if(token == address(0))
+        if(token == ETH_INDEX)
         {
+            // Withdraw ETH from liquidity pool
             (bool os,) = payable(from).call{value: amount}("");
             require(os);
 
@@ -290,6 +312,7 @@ contract HousePool is IHousePool, VRFHelper
         }
         else
         {
+            // Withdraw tokens from liquidity pool
             IERC20(token).transfer(from, amount);
 
             emit RemoveTokenLiquidity(from, token, amount);
@@ -310,39 +333,47 @@ contract HousePool is IHousePool, VRFHelper
     */
     function _requestRoll(address from, address token, uint256 amount, uint256[5][][] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) private returns (uint256)
     {
+        // Total amount of tokens or ETH wagered in this request
         uint256 totalBet = 0;
 
+        // VRF responses
         for(uint256 i = 0; i < bets.length; i++)
         {
+            // Overlapping bets
             for(uint256 a = 0; a < bets[i].length; a++)
             {
-                //Upper bound must be greater than lower bound
+                // Upper bound must be greater than lower bound
                 require(bets[i][a][3] >= bets[i][a][2]);
 
                 uint256 winRange = (bets[i][a][3] - bets[i][a][2]) + 1;
                 uint256 loseOdds = ((bets[i][a][4] - winRange) * 100) / winRange;
 
+                // House edge = (Odds against Success – House Odds) x Probability of Success
                 uint256 houseEdge = (loseOdds - bets[i][a][1]) * ((winRange * 1000) / bets[i][a][4]);
 
-                // House edge must be greater than 1%
+                // House edge must be greater than 1% (could change to 0.5% to give providers more room to take profits)
                 require(houseEdge >= 1000);
 
+                // Add wager to requests total bet amount
                 totalBet += bets[i][a][0];
             }
         }
 
-        // Check roll amount no greater than .01% of liquidity
+        // Check total amount wagered in this requests is less than .01% of the tokens liquidity pool
         require(totalBet <= _getLiquidityBalance(token) / 10000);
 
-        if(token != address(0))
+        if(token != ETH_INDEX)
         {
-            IERC20(token).transferFrom(from, address(this), amount);
+            // Transfer wagers from requestor to house pool
+            IERC20(token).transferFrom(from, address(this), totalBet);
         }
         else
         {
-            require(amount >= totalBet);
+            // Check total wagered is equal to msg.value
+            require(totalBet <= amount);
         }
 
+        // Send VRF request using VRFHelper.sol
         return requestRandomWords(from, bets, token, keyHash, subId, confirmations, gasLimit);
     }
 
@@ -351,24 +382,31 @@ contract HousePool is IHousePool, VRFHelper
     */
     function _withdrawRoll(uint256 requestId) public
     {
+        // Check wagered tokens have already been withdrawn
         require(vrfWithdrawn[requestId] == false);
         vrfWithdrawn[requestId] = true;
 
+        // Amount of tokens to send to roll requestor
         uint256 totalPayout = 0;
 
+        // VRF responses
         for(uint256 i = 0; i < vrfBets[requestId].length; i++)
         {
+            // Overlapping bets
             for(uint256 a = 0; a < vrfBets[requestId][i].length; a++)
             {
+                // Check if bet was won
                 if(_isWinningBet(requestId, i, a))
                 {
+                    // Add initial bet times payout odds to amount to be withdrawn
                     totalPayout += vrfBets[requestId][i][a][0] + ((vrfBets[requestId][i][a][0] * vrfBets[requestId][i][a][1]) / 100);
                 }
             }
         }
 
-        if(vrfTokens[requestId] == address(0))
+        if(vrfTokens[requestId] == ETH_INDEX)
         {
+            // Send ETH to roll requestor
             (bool success,) = vrfRequestors[requestId].call{value: totalPayout}("");
             require(success);
 
@@ -376,6 +414,7 @@ contract HousePool is IHousePool, VRFHelper
         }
         else
         {
+            // Send tokens to roll requestor
             IERC20(vrfTokens[requestId]).transfer(vrfRequestors[requestId], totalPayout);
 
             emit WithdrawToken(vrfRequestors[requestId], vrfTokens[requestId], totalPayout);
