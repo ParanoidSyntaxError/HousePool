@@ -12,9 +12,9 @@ import "../Shared/IERC20.sol";
 // DONE: Withdraw winning bets
 // DONE: House edge must be at least 1%
 // DONE: Overlapping bets
-// DONE: Comments
 
-// TODO: Audit house math
+// TODO: Check house edge and payout odds math (careful with decimal points)
+// TODO: Comments
 // TODO: Docs
 
 contract HousePool is IHousePool, VRFHelper
@@ -94,6 +94,14 @@ contract HousePool is IHousePool, VRFHelper
     }
 
     /*
+        @dev Add comments
+    */
+    function getHouseEdge(uint256 payoutOdds, uint256 lower, uint256 upper, uint256 range) external pure returns (uint256)
+    {
+        return _getHouseEdge(payoutOdds, lower, upper, range);
+    }
+
+    /*
         @param VRF request ID
         @param VRF response index
         @param overlap bet index
@@ -164,7 +172,8 @@ contract HousePool is IHousePool, VRFHelper
 
     /*
         @notice msg.value must be at least total wagered in parameters
-        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00f or 35x, and 50 would be the equivalent of 0.50f or 0.5x  
+        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00f or 35x
+        @notice Lower and Upper are both inclusive
         @notice use the Chainlink VRF docs when deciding VRF request parameters: https://docs.chain.link/docs/chainlink-vrf/
 
         @param bets [VRF response][Overlap bet][Wager, PayoutOdds, Lower, Upper, Range]
@@ -173,7 +182,7 @@ contract HousePool is IHousePool, VRFHelper
         @param confirmations is how many blocks you'd like the oracle to wait before responding to the request
         @param gasLimit is how much gas you'd like to receive in your fulfillRandomWords callback
 
-        @return request ID, a unique identifier of the request
+        @return VRF request ID
     */
     function requestETHRoll(uint256[5][][] memory bets, bytes32 keyHash, uint64 subId, uint16 confirmations, uint32 gasLimit) external override payable returns (uint256)
     {
@@ -182,7 +191,8 @@ contract HousePool is IHousePool, VRFHelper
 
     /*
         @notice contract must be approved to spend at least amount wagered in parameters
-        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00f or 35x, and 50 would be the equivalent of 0.50f or 0.5x  
+        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00f or 35x
+        @notice Lower and Upper are both inclusive
         @notice use the Chainlink VRF docs when deciding VRF request parameters: https://docs.chain.link/docs/chainlink-vrf/
 
         @param contract address of token wagered
@@ -207,6 +217,28 @@ contract HousePool is IHousePool, VRFHelper
     function withdrawRoll(uint256 requestID) external override
     {
         _withdrawRoll(requestID);
+    }
+
+    /*
+        @dev the returned uint256 is formatted like a 2 point floating number. For example, 270 is equal to 2.70f or 2.7%
+
+        @param amount wager is multiplied by
+        @param lowest value random number can be and win (inclusive)
+        @param highest value random number can be and win (inclusive)
+        @param random number is between 1 and this parameter
+
+        @return the house edge percentage
+    */
+    function _getHouseEdge(uint256 payoutOdds, uint256 lower, uint256 upper, uint256 range) private pure returns (uint256)
+    {
+        // Upper bound must be greater than lower bound
+        require(upper >= lower);
+
+        uint256 winRange = (upper - lower) + 1;
+        uint256 loseOdds = ((range - winRange) * 100) / winRange;
+
+        // House edge = (Odds against Success – House Odds) x Probability of Success
+        return ((loseOdds - payoutOdds) * ((winRange * 1000) / range)) / 10;
     }
 
     /*
@@ -342,17 +374,9 @@ contract HousePool is IHousePool, VRFHelper
             // Overlapping bets
             for(uint256 a = 0; a < bets[i].length; a++)
             {
-                // Upper bound must be greater than lower bound
-                require(bets[i][a][3] >= bets[i][a][2]);
-
-                uint256 winRange = (bets[i][a][3] - bets[i][a][2]) + 1;
-                uint256 loseOdds = ((bets[i][a][4] - winRange) * 100) / winRange;
-
-                // House edge = (Odds against Success – House Odds) x Probability of Success
-                uint256 houseEdge = (loseOdds - bets[i][a][1]) * ((winRange * 1000) / bets[i][a][4]);
-
-                // House edge must be greater than 1% (could change to 0.5% to give providers more room to take profits)
-                require(houseEdge >= 1000);
+                // House edge must be greater than 1% (could change to 0.5% to give operators more room to take profits)
+                // Could implement Kelly criterion similar to EdgeFund, instead of fixed house edge: https://www.edgefund.net/
+                require(_getHouseEdge(bets[i][a][1], bets[i][a][2], bets[i][a][3], bets[i][a][4]) >= 100);
 
                 // Add wager to requests total bet amount
                 totalBet += bets[i][a][0];
@@ -380,7 +404,7 @@ contract HousePool is IHousePool, VRFHelper
     /*
         @param VRF request ID
     */
-    function _withdrawRoll(uint256 requestId) public
+    function _withdrawRoll(uint256 requestId) private
     {
         // Check wagered tokens have already been withdrawn
         require(vrfWithdrawn[requestId] == false);
@@ -398,9 +422,17 @@ contract HousePool is IHousePool, VRFHelper
                 // Check if bet was won
                 if(_isWinningBet(requestId, i, a))
                 {
+                    // TODO: PayoutOdds has 2 decimal points
+
                     // Add initial bet times payout odds to amount to be withdrawn
-                    totalPayout += vrfBets[requestId][i][a][0] + ((vrfBets[requestId][i][a][0] * vrfBets[requestId][i][a][1]) / 100);
+                    //totalPayout += vrfBets[requestId][i][a][0] + ((vrfBets[requestId][i][a][0] * vrfBets[requestId][i][a][1]) / 100);
                 }
+
+                // The difference between the operators edge and the mandatory 1% house edge
+                uint256 edgeDifference = _getHouseEdge(vrfBets[requestId][i][a][1], vrfBets[requestId][i][a][2], vrfBets[requestId][i][a][3], vrfBets[requestId][i][a][4]) - 100;
+
+                // This is how operators are able to collect ETH/tokens for their games
+                totalPayout += (vrfBets[requestId][i][a][0] * edgeDifference) / 10000;
             }
         }
 
