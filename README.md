@@ -18,6 +18,6 @@ The difference between the bet’s true odds, and payout odds, minus the houses 
 
 ### Example:
 
-In a regular spin of roulette roulette, the odds of winning on a straight up bet are 1/37. However, a winning player is only payed 35/1 odds. This gives the house a 2.7% edge.
+In a regular spin of roulette, the odds of winning on a straight up bet are 1/37. However, a winning player is only paid 35/1 odds. This gives the house a 2.7% edge.
 
-Using this example with House Pool, the roulette provider would be payed 1.7% of the players wager, regardless if the player wins or loses.
+Using this example with House Pool, the roulette provider would be paid 1.7% of the players wager, regardless of if the player wins or loses.
