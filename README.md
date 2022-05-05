@@ -9,6 +9,7 @@ Liquidity providers can add any token to the houses liquidity and are intitled t
 ## Developers
 
 Developers can use the houses liquidity to build their own games, if they have a funded Chainlink VRF V2 subscription, and the odds give the house an edge of at least 1%. 
+
 The difference between the bet’s true odds, and payout odds, minus the houses mandatory edge, is credited to the requesting address, regardless of the bet’s outcome.
 
 ### Example:
