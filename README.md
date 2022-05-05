@@ -1,4 +1,4 @@
-# SmartCasino
+# House Pool
  
 A decentralized casino and house liquidity pool.
 
