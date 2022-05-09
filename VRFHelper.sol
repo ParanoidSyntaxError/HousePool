@@ -6,14 +6,19 @@ import "../Shared/LinkTokenInterface.sol";
 import "../Shared/VRFCoordinatorV2Interface.sol";
 import "../Shared/VRFConsumerBaseV2.sol";
 
+// DONE: Pack VRF bet data into struct
+
+// TODO: Comments
+
 contract VRFHelper is VRFConsumerBaseV2
 {
     struct Roll
     {
-        address owner;
+        address requestor;
         uint256[5][][] bets;
         address token;
         uint256[] responses;
+        bool withdrawn;
     }
 
     VRFCoordinatorV2Interface public vrfCoordinator;
@@ -22,11 +27,7 @@ contract VRFHelper is VRFConsumerBaseV2
     address private constant VRF_ADDRESS = 0x6A2AAd07396B36Fe02a22b33cf443582f682c82f;
     address private constant LINK_ADDRESS = 0x84b9B910527Ad5C03A9Ca831909E21e236EA7b06;
 
-    mapping(uint256 => address) internal vrfRequestors;
-    mapping(uint256 => uint256[5][][]) internal vrfBets;
-    mapping(uint256 => address) internal vrfTokens;
-    mapping(uint256 => uint256[]) internal vrfResponses;
-    mapping(uint256 => bool) internal vrfWithdrawn;
+    mapping(uint256 => Roll) internal rolls;
 
     constructor() VRFConsumerBaseV2(VRF_ADDRESS)
     {
@@ -48,9 +49,7 @@ contract VRFHelper is VRFConsumerBaseV2
             {
                 uint256 requestId = vrfCoordinator.requestRandomWords(keyHash, subscriptionId, requestConfirmations, callbackGasLimit, (uint32)(bets.length));
 
-                vrfRequestors[requestId] = from;
-                vrfBets[requestId] = bets;
-                vrfTokens[requestId] = token;
+                rolls[requestId] = Roll(from, bets, token, new uint256[](0), false);
 
                 return requestId;
             }
@@ -59,9 +58,9 @@ contract VRFHelper is VRFConsumerBaseV2
         revert();
     }
 
-    //VRF callback
+    // VRF callback
     function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal virtual override 
     {
-        vrfResponses[requestId] = randomWords;
+        rolls[requestId].responses = randomWords;
     }
 }

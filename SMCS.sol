@@ -2,15 +2,16 @@
 
 pragma solidity ^0.8.0;
 
-import "../Shared/IERC20.sol";
-import "../Shared/IERC20Metadata.sol";
-import "../Shared/Context.sol";
+import "./ISMCS.sol";
+import "../Shared/Ownable.sol";
 
-contract SmartCasinoToken is Context, IERC20, IERC20Metadata 
+contract SMCS is Ownable, ISMCS
 {
     mapping(address => uint256) private _balances;
 
     mapping(address => mapping(address => uint256)) private _allowances;
+
+    mapping(address => bool) public mintAccessAccounts;
 
     uint256 private _totalSupply;
     uint256 private _totalBurn;
@@ -21,11 +22,15 @@ contract SmartCasinoToken is Context, IERC20, IERC20Metadata
 
     constructor() 
     {
-        _totalSupply = 1000000 * (10**DECIMALS);
+        mintAccessAccounts[address(this)] = true;
 
-        _balances[msg.sender] = _totalSupply;
+        _mint(_msgSender(), 100000 * (DECIMALS ** 10));
+    }
 
-        emit Transfer(address(0), msg.sender, _totalSupply);
+    modifier onlyMintAccess() 
+    {
+        require(mintAccessAccounts[_msgSender()]);
+        _;
     }
 
     function name() public view virtual override returns (string memory) 
@@ -70,6 +75,31 @@ contract SmartCasinoToken is Context, IERC20, IERC20Metadata
         return _allowances[owner][spender];
     }
 
+    function setMintAccess(address account, bool value) external onlyOwner returns (bool)
+    {
+        mintAccessAccounts[account] = value;
+        return true;
+    }
+
+    function mint(address recipient, uint256 amount) external virtual override onlyMintAccess returns (bool)
+    {
+        _mint(recipient, amount);
+        return true;
+    }
+
+    function burn(uint256 amount) external virtual override returns (bool)
+    {
+        _burn(_msgSender(), amount);
+        return true;
+    }
+
+    function burnFrom(address account, uint256 amount) external virtual override returns (bool) 
+    {
+        _spendAllowance(account, _msgSender(), amount);
+        _burn(account, amount);
+        return true;
+    }
+
     function approve(address spender, uint256 amount) public virtual override returns (bool) 
     {
         address owner = _msgSender();
@@ -103,12 +133,6 @@ contract SmartCasinoToken is Context, IERC20, IERC20Metadata
             _approve(owner, spender, currentAllowance - subtractedValue);
         }
 
-        return true;
-    }
-
-    function burn(uint256 amount) external returns (bool)
-    {
-        _burn(msg.sender, amount);
         return true;
     }
 
@@ -146,6 +170,16 @@ contract SmartCasinoToken is Context, IERC20, IERC20Metadata
         _totalBurn += amount;
 
         emit Transfer(account, address(0), amount);
+    }
+
+    function _mint(address account, uint256 amount) internal virtual 
+    {
+        require(account != address(0), "ERC20: mint to the zero address");
+
+        _totalSupply += amount;
+        _balances[account] += amount;
+
+        emit Transfer(address(0), account, amount);
     }
 
     function _approve(address owner, address spender, uint256 amount) internal virtual 

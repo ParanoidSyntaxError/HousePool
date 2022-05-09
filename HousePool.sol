@@ -13,9 +13,7 @@ import "../Shared/IERC20.sol";
 // DONE: House edge must be at least 1%
 // DONE: Overlapping bets
 
-// TODO: Check house edge and payout odds math (careful with decimal points)
 // TODO: Comments
-// TODO: Docs
 
 contract HousePool is IHousePool, VRFHelper
 {
@@ -47,7 +45,9 @@ contract HousePool is IHousePool, VRFHelper
     */
     function getRoll(uint256 requestId) external view override returns(address, address, uint256[] memory, uint256[5][][] memory)
     {
-        return (vrfRequestors[requestId], vrfTokens[requestId], vrfResponses[requestId], vrfBets[requestId]);
+        Roll memory roll = rolls[requestId];
+
+        return (roll.requestor, roll.token, roll.responses, roll.bets);
     }
 
     /*
@@ -84,17 +84,14 @@ contract HousePool is IHousePool, VRFHelper
     }
 
     /*
-        @param contract address of ERC20 token
+        @notice the returned uint256 is formatted like a 2 point floating number. For example, 270 is equal to 2.70f or 2.7%
 
-        @return ERC20 token balance of this contract
-    */
-    function getTokenBalance(address token) external override view returns (uint256)
-    {
-        return _getLiquidityBalance(token);
-    }
+        @param amount wager is multiplied by
+        @param lowest value random number can be and win (inclusive)
+        @param highest value random number can be and win (inclusive)
+        @param random number is between 1 and this parameter
 
-    /*
-        @dev Add comments
+        @return the house edge percentage
     */
     function getHouseEdge(uint256 payoutOdds, uint256 lower, uint256 upper, uint256 range) external pure returns (uint256)
     {
@@ -214,9 +211,9 @@ contract HousePool is IHousePool, VRFHelper
 
         @param VRF request ID
     */
-    function withdrawRoll(uint256 requestID) external override
+    function withdrawRoll(uint256 requestID) external override returns (uint256)
     {
-        _withdrawRoll(requestID);
+        return _withdrawRoll(requestID);
     }
 
     /*
@@ -250,11 +247,13 @@ contract HousePool is IHousePool, VRFHelper
     */
     function _isWinningBet(uint256 requestId, uint256 responseIndex, uint256 overlapIndex) private view returns (bool)
     {
+        Roll memory roll = rolls[requestId];
+
         // Get random number from VRF response
-        uint256 rolledNumber = (vrfResponses[requestId][responseIndex] % vrfBets[requestId][responseIndex][overlapIndex][4]) + 1;
+        uint256 rolledNumber = (roll.responses[responseIndex] % roll.bets[responseIndex][overlapIndex][4]) + 1;
 
         // Check the random number is within the bets lower to upper range
-        if(rolledNumber >= vrfBets[requestId][responseIndex][overlapIndex][2] && rolledNumber <= vrfBets[requestId][responseIndex][overlapIndex][3])
+        if(rolledNumber >= roll.bets[responseIndex][overlapIndex][2] && rolledNumber <= roll.bets[responseIndex][overlapIndex][3])
         {
             // Winner!
             return true;
@@ -404,52 +403,54 @@ contract HousePool is IHousePool, VRFHelper
     /*
         @param VRF request ID
     */
-    function _withdrawRoll(uint256 requestId) private
+    function _withdrawRoll(uint256 requestId) private returns (uint256)
     {
+        Roll memory roll = rolls[requestId];
+
         // Check wagered tokens have already been withdrawn
-        require(vrfWithdrawn[requestId] == false);
-        vrfWithdrawn[requestId] = true;
+        require(roll.withdrawn == false);
+        rolls[requestId].withdrawn = true;
 
         // Amount of tokens to send to roll requestor
         uint256 totalPayout = 0;
 
         // VRF responses
-        for(uint256 i = 0; i < vrfBets[requestId].length; i++)
+        for(uint256 i = 0; i < roll.bets.length; i++)
         {
             // Overlapping bets
-            for(uint256 a = 0; a < vrfBets[requestId][i].length; a++)
+            for(uint256 a = 0; a < roll.bets[i].length; a++)
             {
                 // Check if bet was won
                 if(_isWinningBet(requestId, i, a))
                 {
-                    // TODO: PayoutOdds has 2 decimal points
-
                     // Add initial bet times payout odds to amount to be withdrawn
-                    //totalPayout += vrfBets[requestId][i][a][0] + ((vrfBets[requestId][i][a][0] * vrfBets[requestId][i][a][1]) / 100);
+                    totalPayout += roll.bets[i][a][0] + ((roll.bets[i][a][0] * roll.bets[i][a][1]) / 100);
                 }
 
                 // The difference between the operators edge and the mandatory 1% house edge
-                uint256 edgeDifference = _getHouseEdge(vrfBets[requestId][i][a][1], vrfBets[requestId][i][a][2], vrfBets[requestId][i][a][3], vrfBets[requestId][i][a][4]) - 100;
+                uint256 edgeDifference = _getHouseEdge(roll.bets[i][a][1], roll.bets[i][a][2], roll.bets[i][a][3], roll.bets[i][a][4]) - 100;
 
                 // This is how operators are able to collect ETH/tokens for their games
-                totalPayout += (vrfBets[requestId][i][a][0] * edgeDifference) / 10000;
+                totalPayout += (roll.bets[i][a][0] * edgeDifference) / 10000;
             }
         }
 
-        if(vrfTokens[requestId] == ETH_INDEX)
+        if(roll.token == ETH_INDEX)
         {
             // Send ETH to roll requestor
-            (bool success,) = vrfRequestors[requestId].call{value: totalPayout}("");
+            (bool success,) = roll.requestor.call{value: totalPayout}("");
             require(success);
 
-            emit WithdrawETH(vrfRequestors[requestId], totalPayout);
+            emit WithdrawETH(roll.requestor, totalPayout);
         }
         else
         {
             // Send tokens to roll requestor
-            IERC20(vrfTokens[requestId]).transfer(vrfRequestors[requestId], totalPayout);
+            IERC20(roll.token).transfer(roll.requestor, totalPayout);
 
-            emit WithdrawToken(vrfRequestors[requestId], vrfTokens[requestId], totalPayout);
+            emit WithdrawToken(roll.requestor, roll.token, totalPayout);
         }
+
+        return totalPayout;
     }
 }
