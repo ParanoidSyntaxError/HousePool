@@ -23,6 +23,14 @@ contract HousePool is IHousePool, VRFHelper
     mapping(address => mapping(address => uint256)) private _shares;
     mapping(address => uint256) private _shareTotals;
 
+
+    mapping (address => uint256) private _rShares;
+    mapping (address => uint256) private _tShares;
+   
+    uint256 private constant MAX = ~uint256(0);
+    uint256 private _tTotal = 1;
+    uint256 private _rTotal = (MAX - (MAX % _tTotal));
+
     /*
         @dev address zero used for ETH mapping indexes
     */
@@ -291,16 +299,16 @@ contract HousePool is IHousePool, VRFHelper
     {
         require(amount > 0);
 
-        if(token != ETH_INDEX)
+        if(token == ETH_INDEX)
+        {
+            emit AddETHLiquidity(from, amount);
+        }
+        else
         {
             // Transfer tokens from account to liquidity pool
             IERC20(token).transferFrom(from, address(this), amount);
 
             emit AddTokenLiquidity(from, token, amount);
-        }
-        else
-        {
-            emit AddETHLiquidity(from, amount);
         }
     
         // Add shares to account
