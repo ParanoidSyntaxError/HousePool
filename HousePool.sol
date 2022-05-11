@@ -408,7 +408,11 @@ contract HousePool is IHousePool, VRFHelper
         Roll memory roll = rolls[requestId];
 
         // Check wagered tokens have already been withdrawn
-        require(roll.withdrawn == false);
+        if(roll.withdrawn)
+        {
+            return 0;
+        }     
+        
         rolls[requestId].withdrawn = true;
 
         // Amount of tokens to send to roll requestor

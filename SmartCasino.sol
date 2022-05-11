@@ -41,10 +41,12 @@ contract SmartCasino is Ownable
     mapping(address => mapping(uint256 => uint256)) private _requestIds;
     // [token][requestId] = timestamp
     mapping(address => mapping(uint256 => uint256)) private _timestamps;
+    // [token][requestId] = is balance updated
+    mapping(address => mapping(uint256 => bool)) private _balanceUpdated;
 
     IHousePool public immutable housePool;
 
-    //ISMCS public immutable smcs;
+    ISMCS public immutable smcs;
 
     CoinFlipData private _coinFlip;
 
@@ -62,7 +64,7 @@ contract SmartCasino is Ownable
     {
         housePool = IHousePool(0x156506363BbeeB3B9BA9E938040ecFAD37310507);
 
-        //smcs = ISMCS(0xb4128706d9Bf5088208C07b12Ef7d86d1c636Bd4);
+        smcs = ISMCS(0xb4128706d9Bf5088208C07b12Ef7d86d1c636Bd4);
 
         setVrfSettings(0xd4bb89654db74673a187bd804519e65e3f71a52bc55f11da7601a13dcf505314, 690, 3, 100000);
     }
@@ -109,7 +111,7 @@ contract SmartCasino is Ownable
 
         if(token == address(1))
         {
-            //smcs.mint(msg.sender, amount);
+            smcs.mint(msg.sender, amount);
         }
         else if(token == housePool.getETHIndex())
         {
@@ -273,16 +275,25 @@ contract SmartCasino is Ownable
 
     function collectFromHouse(uint256 requestId) public
     {
+        (,address token,, uint256[5][][] memory bets) = housePool.getRoll(requestId);
+
+        require(_balanceUpdated[token][requestId] == false);
+
+        _balanceUpdated[token][requestId] = true;
+
         uint256 collected = housePool.withdrawRoll(requestId);
 
-        (,address token,,) = housePool.getRoll(requestId);
+        if(collected == 0)
+        {
+            return;
+        }
 
-        if(_coinFlip.players[token][_timestamps[token][requestId]].length > 0)
+        uint256 timestamp = _timestamps[token][requestId];
+
+        if(_coinFlip.players[token][timestamp].length > 0)
         {
             if(housePool.isWinningBet(requestId, 0, 0))
             {
-                uint256 timestamp = _timestamps[token][requestId];
-
                 for(uint256 i = 0; i < _coinFlip.players[token][timestamp].length; i++)
                 {
                     address player = _coinFlip.players[token][timestamp][i];
@@ -292,12 +303,32 @@ contract SmartCasino is Ownable
                 }
             }
         }
+        else if(_bigWheel.players[token][timestamp].length > 0)
+        {
+            // Bet index
+            for(uint256 i = 0; i < 6; i++)
+            {
+                if(housePool.isWinningBet(requestId, 0, i))
+                {
+                    // Player index
+                    for(uint256 a = 0; a < _bigWheel.players[token][timestamp].length; a++)
+                    {
+                        address player = _bigWheel.players[token][timestamp][a];
+
+                        // Credit winnings
+                        _tokenBalances[token][player] += (_bigWheel.bets[token][timestamp][player][i] * bets[0][i][1]) / 100;
+                    }
+                
+                    break;
+                }
+            }
+        }
 
         if(token == address(1))
         {
-            //smcs.burn(collected);
+            smcs.burn(collected);
         }
 
-        //smcs.mint(msg.sender, 200 * (smcs.decimals() ** 10));
+        smcs.mint(msg.sender, 200 * (smcs.decimals() ** 10));
     }
 }
