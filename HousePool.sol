@@ -6,15 +6,6 @@ import "./IHousePool.sol";
 import "./VRFHelper.sol";
 import "../Shared/IERC20.sol";
 
-// DONE: HousePool interface
-// DONE: Get address earnings
-// DONE: Get address liquidity provided
-// DONE: Withdraw winning bets
-// DONE: House edge must be at least 1%
-// DONE: Overlapping bets
-
-// TODO: Comments
-
 contract HousePool is IHousePool, VRFHelper
 {
     /*
@@ -22,14 +13,6 @@ contract HousePool is IHousePool, VRFHelper
     */
     mapping(address => mapping(address => uint256)) private _shares;
     mapping(address => uint256) private _shareTotals;
-
-
-    mapping (address => uint256) private _rShares;
-    mapping (address => uint256) private _tShares;
-   
-    uint256 private constant MAX = ~uint256(0);
-    uint256 private _tTotal = 1;
-    uint256 private _rTotal = (MAX - (MAX % _tTotal));
 
     /*
         @dev address zero used for ETH mapping indexes
@@ -59,26 +42,31 @@ contract HousePool is IHousePool, VRFHelper
     }
 
     /*
-        @param address of share owner
+        @notice the returned uint256 is formatted like a 3 point floating number. For example, 4251 is equal to 4.251
 
-        @return the inital amount of ETH provided
-        @return amount of ETH that can be withdrawn
-    */
-    function getETHShares(address account) external view returns (uint256, uint256)
-    {
-        return (_shares[ETH_INDEX][account], address(this).balance / (_shareTotals[ETH_INDEX] / _shares[ETH_INDEX][account]));
-    }
-
-    /*
         @param address of share owner
         @param token address of shares
 
-        @return the inital amount of tokens provided
-        @return amount of tokens that can be withdrawn
+        @return accounts ETH share balance
+        @return ETH liquidity share price
+    */
+    function getETHShares(address account) external view returns (uint256, uint256)
+    {
+        return _getShares(account, ETH_INDEX);
+    }
+
+    /*
+        @notice the returned uint256 is formatted like a 3 point floating number. For example, 4251 is equal to 4.251
+
+        @param address of share owner
+        @param token address of shares
+
+        @return accounts token share balance
+        @return token liquidity share price
     */
     function getTokenShares(address account, address token) external view returns (uint256, uint256) 
     {
-        return (_shares[token][account], _getLiquidityBalance(token) / (_shareTotals[token] / _shares[token][account]));
+        return _getShares(account, token);
     }
 
     /*
@@ -92,7 +80,7 @@ contract HousePool is IHousePool, VRFHelper
     }
 
     /*
-        @notice the returned uint256 is formatted like a 2 point floating number. For example, 270 is equal to 2.70f or 2.7%
+        @notice the returned uint256 is formatted like a 2 point floating number. For example, 270 is equal to 2.70 or 2.7%
 
         @param amount wager is multiplied by
         @param lowest value random number can be and win (inclusive)
@@ -177,7 +165,7 @@ contract HousePool is IHousePool, VRFHelper
 
     /*
         @notice msg.value must be at least total wagered in parameters
-        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00f or 35x
+        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00 or 35x
         @notice Lower and Upper are both inclusive
         @notice use the Chainlink VRF docs when deciding VRF request parameters: https://docs.chain.link/docs/chainlink-vrf/
 
@@ -196,7 +184,7 @@ contract HousePool is IHousePool, VRFHelper
 
     /*
         @notice contract must be approved to spend at least amount wagered in parameters
-        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00f or 35x
+        @notice PayoutOdds is formatted like a 2 point floating number. For example, 3500 is equal to 35.00 or 35x
         @notice Lower and Upper are both inclusive
         @notice use the Chainlink VRF docs when deciding VRF request parameters: https://docs.chain.link/docs/chainlink-vrf/
 
@@ -225,7 +213,51 @@ contract HousePool is IHousePool, VRFHelper
     }
 
     /*
-        @dev the returned uint256 is formatted like a 2 point floating number. For example, 270 is equal to 2.70f or 2.7%
+        @dev the returned uint256 is formatted like a 3 point floating number. For example, 4251 is equal to 4.251
+
+        @param token contract
+
+        @return account token shares
+        @return tokens liquidity share price
+    */
+    function _getShares(address account, address token) private view returns(uint256, uint256)
+    {
+        return (_shares[token][account], _getSharePrice(token));
+    }
+
+    /*
+        @dev the returned uint256 is formatted like a 3 point floating number. For example, 4251 is equal to 4.251
+
+        @param token contract
+
+        @return tokens liquidity share price
+    */
+    function _getSharePrice(address token) private view returns (uint256)
+    {
+        return (_getLiquidityBalance(token) * 1000) / _shareTotals[token];
+    }
+
+    /*
+        @dev use ETH_INDEX in parameter to return ETH balance
+
+        @param token contract
+
+        @return amount of tokens or ETH in this contract
+    */
+    function _getLiquidityBalance(address token) private view returns (uint256)
+    {
+        if(token == ETH_INDEX)
+        {
+            // Return contract ETH balance
+            return address(this).balance;
+        }
+
+        // Return contracts ERC20 token balance
+        return IERC20(token).balanceOf(address(this));
+    }
+
+    /*
+        @dev the returned uint256 is formatted like a 2 point floating number. For example, 270 is equal to 2.70 or 2.7%
 
         @param amount wager is multiplied by
         @param lowest value random number can be and win (inclusive)
@@ -272,25 +304,6 @@ contract HousePool is IHousePool, VRFHelper
     }
 
     /*
-        @dev use ETH_INDEX in parameter to return ETH balance
-
-        @param token contract
-
-        @return amount of tokens or ETH in this contract
-    */
-    function _getLiquidityBalance(address token) private view returns (uint256)
-    {
-        if(token == ETH_INDEX)
-        {
-            // Return contract ETH balance
-            return address(this).balance;
-        }
-
-        // Return contracts ERC20 token balance
-        return IERC20(token).balanceOf(address(this));
-    }
-
-    /*
         @param address adding liquidity
         @param token contract being added
         @param amount of tokens added
@@ -310,11 +323,21 @@ contract HousePool is IHousePool, VRFHelper
 
             emit AddTokenLiquidity(from, token, amount);
         }
-    
+
+        // Set inital share price to 1:1 with token
+        uint256 newShares = amount;
+
+        // If shares exist, use liquidity pools share price
+        if(_shareTotals[token] > 0)
+        {
+            // Share price has 3 decimal places
+            newShares = (amount * 1000) / _getSharePrice(token);
+        }
+
         // Add shares to account
-        _shares[token][from] += amount;
+        _shares[token][from] += newShares;
         // Add shares to share supply
-        _shareTotals[token] += amount;
+        _shareTotals[token] += newShares;
     }
 
     /*
@@ -331,10 +354,10 @@ contract HousePool is IHousePool, VRFHelper
         uint256 contractBalance = _getLiquidityBalance(token);
 
         // Amount of tokens being withdrawn
-        uint256 amount = contractBalance / (_shareTotals[token] / shareAmount); 
+        uint256 tokenAmount = (shareAmount * _getSharePrice(token)) / 1000;
 
         // Ensure contract has enough tokens to withdraw
-        require(contractBalance > amount);
+        require(contractBalance > tokenAmount);
 
         // Remove shares from account
         _shares[token][from] -= shareAmount;
@@ -344,17 +367,17 @@ contract HousePool is IHousePool, VRFHelper
         if(token == ETH_INDEX)
         {
             // Withdraw ETH from liquidity pool
-            (bool os,) = payable(from).call{value: amount}("");
+            (bool os,) = payable(from).call{value: tokenAmount}("");
             require(os);
 
-            emit RemoveETHLiquidity(from, amount);
+            emit RemoveETHLiquidity(from, tokenAmount);
         }
         else
         {
             // Withdraw tokens from liquidity pool
-            IERC20(token).transfer(from, amount);
+            IERC20(token).transfer(from, tokenAmount);
 
-            emit RemoveTokenLiquidity(from, token, amount);
+            emit RemoveTokenLiquidity(from, token, tokenAmount);
         }
     }
 
