@@ -2,6 +2,8 @@
 
 A decentralized gaming and betting house liquidity pool.
 
+https://housepool.app/
+
 ## Liquidity providers
 
 Liquidity providers can add any token to the houses liquidity and are intitled to the house’s earnings in proportion to the size of their contribution.
