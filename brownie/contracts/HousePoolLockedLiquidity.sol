@@ -22,15 +22,17 @@ contract HousePoolLockedLiquidity is ERC721 {
         HousePoolToken = housePoolToken;
     }
 
-    function lockLiquidity(address receiver, address token, uint256 amount, uint256 duration) external returns(uint256 tokenId) {
-        tokenId = _totalSupply;
+    function lockLiquidity(address receiver, address token, uint256 amount, uint256 duration) external returns(uint256) {       
+        IERC20(token).transferFrom(msg.sender, receiver, amount);
+
+        uint256 tokenId = _totalSupply;
         
-        IERC20(token).transferFrom(_msgSender(), receiver, tokenId);
+        _lockedLiquidity[tokenId] = LockedLiquidity(token, amount, block.timestamp + duration);
+        _totalSupply++;
 
         _safeMint(receiver, tokenId);
 
-        _lockedLiquidity[tokenId] = LockedLiquidity(token, amount, block.timestamp + duration);
-        _totalSupply++;
+        return tokenId;
     }
 
     function unlockLiquidity(uint256 tokenId, address receiver) external {

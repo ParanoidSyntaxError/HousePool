@@ -37,9 +37,58 @@ contract HousePool is IHousePool, VRFHelper {
 
     receive() external payable {}
 
-    function addLiquidity(address receiver, address token, uint256 amount) external {       
-        IERC20Metadata erc20 = IERC20Metadata(token);
+    function setVrfSettings(uint64 subscriptionId, VRFSettings calldata vrfSettings) external {
+        require(msg.sender == _vrfOwner(subscriptionId));
+        _vrfSettings[subscriptionId] = vrfSettings;
+    } 
 
+    function request(RequestParams calldata requestParams, uint64 subscriptionId) external override returns (uint256) {
+        // Total amount of tokens or ETH wagered in this request
+        uint256 betAmount;
+
+        // VRF responses
+        for(uint256 v; v < requestParams.bets.length; v++) {
+            // Overlapping bets
+            for(uint256 o; o < requestParams.bets[v].length; o++) {
+                // House edge must be greater than 1%
+                require(_calculateHouseEdge(requestParams.bets[v][o][1], requestParams.bets[v][o][2], requestParams.bets[v][o][3], requestParams.bets[v][o][4]) >= 100);
+
+                // Add wager to requests total bet amount
+                betAmount += requestParams.bets[v][o][0];
+            }
+        }
+
+        IERC20 erc20 = IERC20(requestParams.token);
+
+        // Check total amount wagered in this requests is less than .01% of the tokens liquidity pool
+        require(betAmount <= erc20.balanceOf(address(this)) / 10000);
+
+        erc20.transferFrom(msg.sender, address(this), betAmount);
+
+        // Send VRF request using VRFHelper.sol
+        uint256 requestId = _requestRandomWords(msg.sender, _vrfSettings[subscriptionId].keyHash, subscriptionId, _vrfSettings[subscriptionId].requestConfirmations, _vrfSettings[subscriptionId].callbackGasLimit, uint32(requestParams.bets.length));
+
+        _requests[_totalRequests] = RequestData(requestParams.receiver, requestParams.bets, requestParams.token, requestId, false);
+        _totalRequests++;
+
+        return _totalRequests - 1;
+    }
+
+    function collectRequests(uint256[] memory requestIndexes) external override {
+        for(uint256 i; i < requestIndexes.length; i++) {
+            require(_requests[requestIndexes[i]].withdrawn == false);
+            _requests[requestIndexes[i]].withdrawn = true;
+            
+            uint256 transferAmount = _collectionAmount(requestIndexes[i]);
+        
+            IERC20(_requests[requestIndexes[i]].token).transfer(_requests[requestIndexes[i]].receiver, transferAmount);
+        }
+    }
+
+    /*
+    */
+    function addLiquidity(address receiver, address token, uint256 amount) external override returns (uint256) {       
+        IERC20Metadata erc20 = IERC20Metadata(token);
         erc20.transferFrom(msg.sender, address(this), amount);
 
         if(_liquidityTokens[token] == address(0)) {
@@ -52,7 +101,7 @@ contract HousePool is IHousePool, VRFHelper {
             IHP20(liquidityToken).initialize(address(this), "HousePool Liquidity", liquidityTokenSymbol, erc20.decimals());
         } else {
             if(erc20.balanceOf(address(this)) == 0) {
-                // No tokens at risk, so clear liquidity tokens
+                // No tokens at risk, clear liquidity tokens
                 IHP20(_liquidityTokens[token]).clearBalances();
             }
         }
@@ -60,10 +109,20 @@ contract HousePool is IHousePool, VRFHelper {
         // TODO: What if sharePrice == 0 ?
         uint256 liquidityTokenAmount = (amount * LIQUIDITY_TOKEN_PRICE_SCALE) / _liquidityTokenPrice(token);
         IHP20(_liquidityTokens[token]).mint(receiver, liquidityTokenAmount);
+
+        return liquidityTokenAmount;
     }
 
-    function removeLiquidity(address receiver, address token, uint256 amount) external {
-        
+    /*
+    */
+    function removeLiquidity(address receiver, address token, uint256 amount) external override returns (uint256) {
+        IHP20(_liquidityTokens[token]).burnFrom(msg.sender, amount);
+
+        // TODO: What if sharePrice == 0 ?
+        uint256 tokenAmount = (amount * _liquidityTokenPrice(token)) / LIQUIDITY_TOKEN_PRICE_SCALE;
+        IERC20(token).transfer(receiver, tokenAmount);
+
+        return tokenAmount;
     }
 
     /*
@@ -93,10 +152,6 @@ contract HousePool is IHousePool, VRFHelper {
         return _responses[requestId];
     }
 
-    function getHouseEdge(uint256 payoutOdds, uint256 lower, uint256 upper, uint256 range) external pure override returns (uint256) {
-        return _getHouseEdge(payoutOdds, lower, upper, range);
-    }
-
     function isWinningBet(uint256 requestIndex, uint256 vrfIndex, uint256 overlapIndex) external view override returns (bool) {
         return _isWinningBet(
             _responses[_requests[requestIndex].requestId][vrfIndex], 
@@ -106,67 +161,31 @@ contract HousePool is IHousePool, VRFHelper {
         );
     }
 
-    function withdrawAmount(uint256 requestIndex) external view override returns (uint256) {
-        return _withdrawAmount(requestIndex);
+    function collectionAmount(uint256 requestIndex) external view override returns (uint256) {
+        return _collectionAmount(requestIndex);
     }   
 
-    function setVrfSettings(uint64 subscriptionId, VRFSettings calldata vrfSettings) external {
-        require(msg.sender == _vrfOwner(subscriptionId));
-        _vrfSettings[subscriptionId] = vrfSettings;
-    } 
+    function calculateHouseEdge(uint256 payoutOdds, uint256 lower, uint256 upper, uint256 range) external pure override returns (uint256) {
+        return _calculateHouseEdge(payoutOdds, lower, upper, range);
+    }
 
-    function request(RequestParams calldata requestParams, uint64 subscriptionId) external override returns (uint256) {
-        // Total amount of tokens or ETH wagered in this request
-        uint256 betAmount;
-
-        // VRF responses
-        for(uint256 v; v < requestParams.bets.length; v++) {
+    function _collectionAmount(uint256 requestIndex) internal view returns (uint256 amount) {
+        for(uint256 v; v < _requests[requestIndex].bets.length; v++) {
+            uint256 random = _responses[_requests[requestIndex].requestId][v];
+            
             // Overlapping bets
-            for(uint256 o; o < requestParams.bets[v].length; o++) {
-                // House edge must be greater than 1%
-                require(_getHouseEdge(requestParams.bets[v][o][1], requestParams.bets[v][o][2], requestParams.bets[v][o][3], requestParams.bets[v][o][4]) >= 100);
+            for(uint256 o; o < _requests[requestIndex].bets[v].length; o++) {
+                if(_isWinningBet(random, _requests[requestIndex].bets[v][o][2], _requests[requestIndex].bets[v][o][3], _requests[requestIndex].bets[v][o][4])) {
+                    // Add initial bet times payout odds
+                    amount += _requests[requestIndex].bets[v][o][0] + ((_requests[requestIndex].bets[v][o][0] * _requests[requestIndex].bets[v][o][1]) / 100);
+                }
 
-                // Add wager to requests total bet amount
-                betAmount += requestParams.bets[v][o][0];
+                // The difference between the operators edge and the mandatory 1% house edge
+                uint256 edgeDifference = _calculateHouseEdge(_requests[requestIndex].bets[v][o][1], _requests[requestIndex].bets[v][o][2], _requests[requestIndex].bets[v][o][3], _requests[requestIndex].bets[v][o][4]) - 100;
+            
+                amount += (_requests[requestIndex].bets[v][o][0] * edgeDifference) / 10000;
             }
         }
-
-        IERC20 erc20 = IERC20(requestParams.token);
-
-        // Check total amount wagered in this requests is less than .01% of the tokens liquidity pool
-        require(betAmount <= erc20.balanceOf(address(this)) / 10000);
-
-        erc20.transferFrom(msg.sender, address(this), betAmount);
-
-        // Send VRF request using VRFHelper.sol
-        uint256 requestId = _requestRandomWords(msg.sender, _vrfSettings[subscriptionId].keyHash, subscriptionId, _vrfSettings[subscriptionId].requestConfirmations, _vrfSettings[subscriptionId].callbackGasLimit, uint32(requestParams.bets.length));
-
-        _requests[_totalRequests] = RequestData(requestParams.receiver, requestParams.bets, requestParams.token, requestId, false);
-        _totalRequests++;
-
-        return _totalRequests - 1;
-    }
-
-    function withdrawRequests(uint256[] memory requestIndexes) external override {
-        for(uint256 i; i < requestIndexes.length; i++) {
-            require(_requests[requestIndexes[i]].withdrawn == false);
-            _requests[requestIndexes[i]].withdrawn = true;
-            
-            uint256 transferAmount = _withdrawAmount(requestIndexes[i]);
-        
-            IERC20(_requests[requestIndexes[i]].token).transfer(_requests[requestIndexes[i]].receiver, transferAmount);
-        }
-    }
-
-    function _getHouseEdge(uint256 payoutOdds, uint256 lower, uint256 upper, uint256 range) internal pure returns (uint256) {
-        // Upper bound must be greater than lower bound
-        require(upper >= lower);
-
-        uint256 winRange = (upper - lower) + 1;
-        uint256 loseOdds = ((range - winRange) * 100) / winRange;
-
-        // House edge = (Odds against Success – House Odds) x Probability of Success
-        return ((loseOdds - payoutOdds) * ((winRange * 1000) / range)) / 10;
     }
 
     function _isWinningBet(uint256 random, uint256 lower, uint256 upper, uint256 range) internal pure returns (bool) {
@@ -183,22 +202,14 @@ contract HousePool is IHousePool, VRFHelper {
         return false;
     }
 
-    function _withdrawAmount(uint256 requestIndex) internal view returns (uint256 amount) {
-        for(uint256 v; v < _requests[requestIndex].bets.length; v++) {
-            uint256 random = _responses[_requests[requestIndex].requestId][v];
-            
-            // Overlapping bets
-            for(uint256 o; o < _requests[requestIndex].bets[v].length; o++) {
-                if(_isWinningBet(random, _requests[requestIndex].bets[v][o][2], _requests[requestIndex].bets[v][o][3], _requests[requestIndex].bets[v][o][4])) {
-                    // Add initial bet times payout odds
-                    amount += _requests[requestIndex].bets[v][o][0] + ((_requests[requestIndex].bets[v][o][0] * _requests[requestIndex].bets[v][o][1]) / 100);
-                }
+    function _calculateHouseEdge(uint256 payoutOdds, uint256 lower, uint256 upper, uint256 range) internal pure returns (uint256) {
+        // Upper bound must be greater than lower bound
+        require(upper >= lower);
 
-                // The difference between the operators edge and the mandatory 1% house edge
-                uint256 edgeDifference = _getHouseEdge(_requests[requestIndex].bets[v][o][1], _requests[requestIndex].bets[v][o][2], _requests[requestIndex].bets[v][o][3], _requests[requestIndex].bets[v][o][4]) - 100;
-            
-                amount += (_requests[requestIndex].bets[v][o][0] * edgeDifference) / 10000;
-            }
-        }
+        uint256 winRange = (upper - lower) + 1;
+        uint256 loseOdds = ((range - winRange) * 100) / winRange;
+
+        // House edge = (Odds against Success – House Odds) x Probability of Success
+        return ((loseOdds - payoutOdds) * ((winRange * 1000) / range)) / 10;
     }
 }

@@ -17,16 +17,17 @@ interface IHousePool {
 
     function setVrfSettings(uint64 subscriptionId, VRFSettings calldata vrfSettings) external;
 
+    function request(RequestParams calldata requestParams, uint64 subscriptionId) external returns (uint256);
+    function collectRequests(uint256[] calldata indexes) external;
+
+    function addLiquidity(address receiver, address token, uint256 amount) external returns (uint256);
+    function removeLiquidity(address receiver, address token, uint256 amount) external returns (uint256);
+
     function getRequest(uint256 requestIndex) external view returns(address, uint256, uint256[5][][] memory, address, bool);
     function getResponse(uint256 requestId) external view returns (uint256[] memory);
 
-    function getHouseEdge(uint256 payoutOdds, uint256 lower, uint256 upper, uint256 range) external pure returns (uint256);
     function isWinningBet(uint256 requestIndex, uint256 vrfIndex, uint256 overlapIndex) external view returns (bool);
-    // TODO: Rename
-    function withdrawAmount(uint256 requestIndex) external view returns (uint256);
-
-    function request(RequestParams calldata requestParams, uint64 subscriptionId) external returns (uint256);
-    function withdrawRequests(uint256[] calldata indexes) external;
-
-    function addLiquidity(address receiver, address token, uint256 amount) external;
+    function collectionAmount(uint256 requestIndex) external view returns (uint256);
+    
+    function calculateHouseEdge(uint256 payoutOdds, uint256 lower, uint256 upper, uint256 range) external pure returns (uint256);
 }
