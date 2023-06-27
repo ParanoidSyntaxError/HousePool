@@ -5,6 +5,8 @@ import "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
 import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
 
+import "../interfaces/IHousePool.sol";
+
 contract VRFHelper is VRFConsumerBaseV2 {
     VRFCoordinatorV2Interface public vrfCoordinator;
     LinkTokenInterface public linkToken;
@@ -20,9 +22,9 @@ contract VRFHelper is VRFConsumerBaseV2 {
         (,,owner,) = vrfCoordinator.getSubscription(subscriptionId);
     }
 
-    function _requestRandomWords(address from, bytes32 keyHash, uint64 subscriptionId, uint16 requestConfirmations, uint32 callbackGasLimit, uint32 randomWords) internal returns (uint256) {
+    function _requestRandomWords(address from, uint64 subscriptionId, bytes32 keyHash, uint16 requestConfirmations, uint32 callbackGasLimit, uint32 randomWords) internal returns (uint256) {
         (,,,address[] memory consumers) = vrfCoordinator.getSubscription(subscriptionId);
-
+        
         bool isConsumer;
         for(uint256 i; i < consumers.length; i++) {
             if(from == consumers[i]) {
