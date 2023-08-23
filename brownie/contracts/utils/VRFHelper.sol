@@ -8,8 +8,8 @@ import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
 import "../interfaces/IHousePool.sol";
 
 contract VRFHelper is VRFConsumerBaseV2 {
-    VRFCoordinatorV2Interface public vrfCoordinator;
-    LinkTokenInterface public linkToken;
+    VRFCoordinatorV2Interface public immutable vrfCoordinator;
+    LinkTokenInterface public immutable linkToken;
 
     mapping(uint256 => uint256[]) internal _responses;
 

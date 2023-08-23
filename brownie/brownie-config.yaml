@@ -6,9 +6,9 @@ networks:
         cmd_settings:
             port: 8545
             gas_limit: 6721975
-            accounts: 20
+            accounts: 200
 compiler:
   solc:
     remappings:
       - '@chainlink=smartcontractkit/chainlink-brownie-contracts@0.4.1'
-      - '@openzeppelin=OpenZeppelin/openzeppelin-contracts@4.9.2'
+      - '@openzeppelin=OpenZeppelin/openzeppelin-contracts@4.9.3'
